@@ -1,0 +1,8 @@
+[functions.admin-user-management]
+verify_jwt = false
+
+[functions.student-app-access]
+verify_jwt = false
+
+[functions.student-login]
+verify_jwt = false
