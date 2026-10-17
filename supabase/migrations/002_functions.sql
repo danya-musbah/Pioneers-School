@@ -690,28 +690,61 @@ stable
 security definer
 set search_path = pg_catalog, public, auth, app, pg_temp
 as $$
-	select coalesce(
-		(
-			select coalesce(p.email, u.email::text)
-			from public.profiles p
-			join auth.users u on u.id = p.id
+	select case when count(*) = 1 then max(matches.email) end
+	from (
+		select u.email::text as email
+		from public.student_app_accounts a
+		join public.students s
+			on s.id = a.student_id
+			and s.school_id = a.school_id
+		join auth.users u on u.id = a.auth_user_id
+		where a.is_enabled
+			and a.auth_user_id is not null
+			and s.student_app_login_enabled
+			and s.student_app_login_status in ('active', 'reset_required')
+			and s.educational_status <> 'withdrawn'
+			and not coalesce(s.is_archived, false)
+			and lower(btrim(s.student_number)) = lower(btrim(coalesce(p_username, '')))
+			and not exists (
+				select 1
+				from public.profiles p
+			join auth.users staff_auth on staff_auth.id = p.id
 			where p.status = 'active'
-				and lower(btrim(p.username)) = lower(btrim(p_username))
-			limit 1
-		),
-		(
-			select a.login_email
-			from public.student_app_accounts a
-			join public.students s on s.id = a.student_id and s.school_id = a.school_id
-			where a.is_enabled
-				and s.student_app_login_enabled
-				and s.student_app_login_status in ('active', 'reset_required')
-				and s.educational_status <> 'withdrawn'
-				and not coalesce(s.is_archived, false)
-				and lower(btrim(s.student_number)) = lower(btrim(p_username))
-			limit 1
-		)
-	);
+				and lower(btrim(p.username)) = lower(btrim(coalesce(p_username, '')))
+			)
+	) matches;
+$$;
+
+create or replace function public.resolve_staff_login_email(p_username text)
+returns text
+language sql
+stable
+security definer
+set search_path = pg_catalog, public, auth, app, pg_temp
+as $$
+	select case when count(*) = 1 then max(matches.email) end
+	from (
+		select coalesce(p.email, u.email::text) as email
+		from public.profiles p
+		join auth.users u on u.id = p.id
+		where p.status = 'active'
+			and lower(btrim(p.username)) = lower(btrim(coalesce(p_username, '')))
+			and not exists (
+				select 1
+				from public.student_app_accounts a
+				join public.students s
+					on s.id = a.student_id
+					and s.school_id = a.school_id
+			join auth.users student_auth on student_auth.id = a.auth_user_id
+				where a.is_enabled
+					and a.auth_user_id is not null
+					and s.student_app_login_enabled
+					and s.student_app_login_status in ('active', 'reset_required')
+					and s.educational_status <> 'withdrawn'
+					and not coalesce(s.is_archived, false)
+					and lower(btrim(s.student_number)) = lower(btrim(coalesce(p_username, '')))
+			)
+	) matches;
 $$;
 
 -- Student numbers are login identifiers and cannot shadow staff usernames.
@@ -799,6 +832,39 @@ as $$
 		and s.educational_status <> 'withdrawn'
 		and not coalesce(s.is_archived, false)
 	limit 1;
+$$;
+
+-- Narrow authenticated projection for the signed-in student's own identity
+-- fields. The RPC accepts no caller-supplied student ID.
+create or replace function public.student_portal_identity()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public, app, pg_temp
+as $$
+declare
+	v_student_id uuid;
+begin
+	v_student_id := app.current_student_portal_id();
+	if v_student_id is null then
+		return null;
+	end if;
+
+	return (
+		select jsonb_build_object(
+			'student', jsonb_build_object(
+				'gender', s.gender,
+				'photo_path', s.photo_path,
+				'photo_storage_path', s.photo_storage_path,
+				'avatar_path', s.avatar_path,
+				'avatar_storage_path', s.avatar_storage_path
+			)
+		)
+		from public.students s
+		where s.id = v_student_id
+	);
+end;
 $$;
 
 -- Authenticated student portal projection. Identity is resolved from the
@@ -4484,6 +4550,9 @@ begin
 				and (v_exam.grade_id is null or e.grade_id=v_exam.grade_id)
 		);
 	get diagnostics n=row_count;
+	if n = 0 then
+		raise exception 'لا توجد درجات مدخلة لاعتمادها';
+	end if;
 	update public.exams set status='approved'
 	where id=p_exam_id and school_id=app.current_school_id();
 	return jsonb_build_object('approved_records',n);

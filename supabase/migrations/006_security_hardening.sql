@@ -95,13 +95,20 @@ revoke execute on function public.current_profile_id() from authenticated;
 revoke execute on function public.current_user_school() from authenticated;
 revoke execute on function public.has_permission(text) from authenticated;
 revoke execute on function public.is_manager() from authenticated;
-revoke execute on function public.begin_login_attempt(text) from authenticated;
-revoke execute on function public.record_login_failure(text) from authenticated;
-revoke all on function public.resolve_login_email(text) from public, anon, authenticated;
-revoke all on function public.begin_login_attempt(text) from public, anon, authenticated;
-revoke all on function public.record_login_failure(text) from public, anon, authenticated;
+-- Pre-auth username resolution and throttling are server-side only. The
+-- username-auth Edge Function uses the service-role key for these RPCs.
+revoke all on function public.begin_login_attempt(text)
+  from public, anon, authenticated;
 grant execute on function public.begin_login_attempt(text) to service_role;
+revoke all on function public.record_login_failure(text)
+  from public, anon, authenticated;
+grant execute on function public.record_login_failure(text) to service_role;
+revoke all on function public.resolve_login_email(text)
+  from public, anon, authenticated;
 grant execute on function public.resolve_login_email(text) to service_role;
+revoke all on function public.resolve_staff_login_email(text)
+  from public, anon, authenticated;
+grant execute on function public.resolve_staff_login_email(text) to service_role;
 revoke all on function public.set_notification_read_states(text[], boolean) from public, anon, authenticated;
 grant execute on function public.set_notification_read_states(text[], boolean) to authenticated;
 revoke all on function public.mark_notification_read(uuid) from public, anon, authenticated;
@@ -143,6 +150,8 @@ revoke all on function app.current_student_portal_id() from public, anon, authen
 grant execute on function app.current_student_portal_id() to authenticated;
 revoke all on function public.student_portal_session() from public, anon, authenticated;
 grant execute on function public.student_portal_session() to authenticated;
+revoke all on function public.student_portal_identity() from public, anon, authenticated;
+grant execute on function public.student_portal_identity() to authenticated;
 revoke all on function public.student_app_access_account_statuses(uuid[]) from public, anon, authenticated;
 grant execute on function public.student_app_access_account_statuses(uuid[]) to authenticated;
 
