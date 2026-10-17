@@ -18,6 +18,8 @@ const defaultAllowedOrigins = [
   "http://127.0.0.1:8080",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
+  "http://localhost:3030",
+  "http://127.0.0.1:3030",
   "http://localhost:4173",
   "http://localhost:5173",
 ];
@@ -27,8 +29,9 @@ function getAllowedOrigins() {
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
-  // An explicit production allow-list replaces development origins.
-  return new Set(configured.length ? configured : defaultAllowedOrigins);
+  // Keep explicit local development origins while adding exact production
+  // origins. The bearer token and server-side permission checks remain required.
+  return new Set([...defaultAllowedOrigins, ...configured]);
 }
 
 function buildCorsHeaders(request: Request) {

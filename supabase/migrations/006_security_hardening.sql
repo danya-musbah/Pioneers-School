@@ -51,6 +51,19 @@ grant execute on function public.record_login_failure(text) to anon;
 grant execute on function public.resolve_login_email(text) to anon;
 grant execute on all functions in schema public to authenticated;
 grant execute on all functions in schema app to authenticated;
+-- Trigger entrypoints and the explicit-school number allocator are internal;
+-- browser requests use the permission-checked zero-argument allocator instead.
+revoke all on function public.generate_employee_number() from public, anon, authenticated;
+revoke all on function public.guard_academic_year_unique_name() from public, anon, authenticated;
+revoke all on function public.next_employee_number(uuid) from public, anon, authenticated;
+revoke all on function public.is_school_day_for_year(uuid, date) from public, anon, authenticated;
+revoke all on function public.next_receipt_number(uuid) from public, anon, authenticated;
+revoke all on function public.finance_create_payment_atomic(
+  uuid, numeric, app.payment_method, date, text, text, text, text, text
+) from public, anon, authenticated;
+-- This legacy placeholder only echoes its inputs and is not used by the app.
+revoke all on function public.calculate_subject_result(uuid, uuid, app.exam_round)
+  from public, anon, authenticated;
 revoke execute on function public.generate_year_archive(uuid, text) from public, anon, authenticated;
 revoke execute on function public.guard_announcement_metadata() from public, anon, authenticated;
 revoke execute on function app.can_view_announcement(app.announcement_audience, uuid) from public, anon;
@@ -133,6 +146,17 @@ grant execute on function public.student_portal_session() to authenticated;
 revoke all on function public.student_app_access_account_statuses(uuid[]) from public, anon, authenticated;
 grant execute on function public.student_app_access_account_statuses(uuid[]) to authenticated;
 
+-- Student data is projected only for the authenticated student identity; the
+-- caller cannot choose a student ID and receives no direct table access.
+revoke all on function public.student_portal_data() from public, anon, authenticated;
+grant execute on function public.student_portal_data() to authenticated;
+
+-- Class-subject materialization is a permission-checked timetable RPC only.
+revoke all on function public.ensure_class_subjects_for_timetable(uuid)
+  from public, anon, authenticated;
+grant execute on function public.ensure_class_subjects_for_timetable(uuid)
+  to authenticated;
+
 -- Tenant and withdrawal trigger helpers are not REST RPCs.
 revoke all on function app.set_audit_log_school_scope() from public, anon, authenticated;
 revoke all on function app.guard_academic_year_closure() from public, anon, authenticated;
@@ -173,4 +197,46 @@ begin
   end if;
 end;
 $$;
+
+-- Student-only app access and guardian-login guard are internal protections.
+revoke all on function app.guardian_app_login_status_write_guard()
+  from public, anon, authenticated;
+revoke all on function public.update_guardian_app_login_status(uuid, text, text)
+  from public, anon, authenticated;
+
+-- Location records are school-scoped; timetable/curriculum materializations
+-- are readable but writable only through their permission-checked RPCs.
+grant select, insert, update on public.school_locations to authenticated;
+grant select on public.class_subjects to authenticated;
+grant select on public.employee_assignments to authenticated;
+revoke all on function app.touch_school_location_version()
+  from public, anon, authenticated;
+revoke all on function app.guard_timetable_entry_year()
+  from public, anon, authenticated;
+revoke all on function public.ensure_class_subjects_for_employee_assignments(uuid)
+  from public, anon;
+grant execute on function public.ensure_class_subjects_for_employee_assignments(uuid)
+  to authenticated;
+revoke all on function public.list_employee_assignment_options(uuid, uuid)
+  from public, anon;
+grant execute on function public.list_employee_assignment_options(uuid, uuid)
+  to authenticated;
+revoke all on function public.sync_employee_assignments(uuid, uuid, uuid[])
+  from public, anon;
+grant execute on function public.sync_employee_assignments(uuid, uuid, uuid[])
+  to authenticated;
+revoke all on function public.add_timetable_entry(uuid, smallint, uuid, uuid, uuid, uuid, text)
+  from public, anon;
+grant execute on function public.add_timetable_entry(uuid, smallint, uuid, uuid, uuid, uuid, text)
+  to authenticated;
+revoke all on function public.update_timetable_entry(uuid, smallint, uuid, uuid, uuid, text, integer)
+  from public, anon;
+grant execute on function public.update_timetable_entry(uuid, smallint, uuid, uuid, uuid, text, integer)
+  to authenticated;
+
+-- Payroll creation is authenticated and permission-checked by its RPC body.
+revoke all on function public.generate_payroll(uuid, text) from public, anon;
+grant execute on function public.generate_payroll(uuid, text) to authenticated;
+
+notify pgrst, 'reload schema';
 

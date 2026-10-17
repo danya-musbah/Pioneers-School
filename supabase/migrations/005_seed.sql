@@ -241,14 +241,17 @@ begin
     ('SCI','العلوم',true,6),
     ('ICT','الحاسوب',true,7),
     ('WRITING','الكتابة',true,8),
-    ('ART','التربية الفنية',false,9),
-    ('PE','التربية البدنية',false,10),
-    ('NATIONAL','التربية الوطنية',false,11),
-    ('MUSIC_LIBRARY','التربية الموسيقية / المكتبة',false,12),
-    ('HISTORY','التاريخ',true,13),
-    ('GEOGRAPHY','الجغرافيا',true,14),
-    ('SOCIAL_HISTORY','الاجتماعيات / التاريخ',true,15),
-    ('SOCIAL_GEOGRAPHY','الاجتماعيات / الجغرافيا',true,16)
+    ('ART','التربية الفنية / الرسم',false,9),
+    ('PE','التربية البدنية / الرياضة',false,10),
+    ('MENTAL_MATH','الحساب الذهني',false,11),
+    ('LIBRARY','المكتبة',false,12),
+    ('SUPPLEMENTARY','الحصة المكملة',false,13),
+    ('NATIONAL','التربية الوطنية',false,14),
+    ('MUSIC_LIBRARY','التربية الموسيقية / المكتبة',false,15),
+    ('HISTORY','التاريخ',true,16),
+    ('GEOGRAPHY','الجغرافيا',true,17),
+    ('SOCIAL_HISTORY','الاجتماعيات / التاريخ',true,18),
+    ('SOCIAL_GEOGRAPHY','الاجتماعيات / الجغرافيا',true,19)
   ) as x(code,name_ar,is_core,sort_order)
   where sid is not null
   on conflict (school_id, name_ar) do nothing;
@@ -283,10 +286,10 @@ begin
     (5,'الاستراحة',time '10:15',time '10:55',true),
     (6,'الحصة الرابعة',time '10:55',time '11:35',false),
     (7,'الحصة الخامسة',time '11:35',time '12:15',false),
-    (8,'الحصة السادسة',time '12:14',time '12:55',false)
+    (8,'الحصة السادسة',time '12:15',time '12:55',false)
   ) as x(period_number,name_ar,start_time,end_time,is_break)
   where sid is not null
-  on conflict (school_id, period_number) do update set
+  on conflict (school_id, academic_year_id, period_number) do update set
     academic_year_id = excluded.academic_year_id,
     name_ar = excluded.name_ar,
     start_time = excluded.start_time,
@@ -339,14 +342,13 @@ begin
     (sid, v_year_id, date '2026-12-16', date '2026-12-16', date '2026-12-29', 'exam_day', 'exam', 'الامتحانات النهائية للفصل الدراسي الأول', 'transition', 'preparatory', 'امتحانات الفصل الأول', 'الامتحانات النهائية للفصل الدراسي الأول.', true),
     (sid, v_year_id, date '2027-01-03', date '2027-01-03', date '2027-01-03', 'special_day', 'transition', 'بداية الفصل الدراسي الثاني', 'transition', 'preparatory', 'بداية الفصل الثاني', 'بداية الفصل الدراسي الثاني.', true),
     (sid, v_year_id, date '2027-03-21', date '2027-03-21', date '2027-04-01', 'exam_day', 'exam', 'الاختبارات النصفية للفصل الدراسي الثاني', 'transition', 'preparatory', 'اختبارات نصفية', 'الاختبارات النصفية للفصل الدراسي الثاني مع استمرار الدراسة.', true),
-    (sid, v_year_id, date '2027-04-29', date '2027-04-29', date '2027-04-29', 'special_day', 'term', 'نهاية الفصل الدراسي الثاني', 'transition', 'preparatory', 'نهاية الفصل الثاني', 'نهاية الفصل الدراسي الثاني.', false),
+    (sid, v_year_id, date '2027-04-29', date '2027-04-29', date '2027-04-29', 'special_day', 'special_day', 'نهاية الفصل الدراسي الثاني / نهاية تقييم الفترة الثالثة', 'all', 'all', 'نهاية الفصل الدراسي الثاني للمراحل الإعدادية، ونهاية تقييم الفترة الثالثة للصفوف الأول والثاني والثالث', 'قيد التقويم يسمح بسجل واحد لكل تاريخ؛ حالة اليوم الدراسي true لأن تقييم المرحلة الابتدائية مجدول في هذا التاريخ، مع الاحتفاظ بنهاية الفصل الدراسي الثاني للمراحل الإعدادية.', true),
     (sid, v_year_id, date '2027-05-02', date '2027-05-02', date '2027-05-13', 'exam_day', 'exam', 'الامتحانات النهائية للفصل الدراسي الثاني', 'transition', 'preparatory', 'امتحانات الفصل الثاني', 'الامتحانات النهائية للفصل الدراسي الثاني.', true),
     (sid, v_year_id, date '2027-06-20', date '2027-06-20', date '2027-07-01', 'exam_day', 'exam', 'امتحانات الدور الثاني لصفوف النقل', 'transition', 'preparatory', 'امتحانات النقل', 'امتحانات الدور الثاني لصفوف النقل.', true),
     (sid, v_year_id, date '2026-11-12', date '2026-11-12', date '2026-11-12', 'special_day', 'exam', 'نهاية تقييم الفترة الأولى', 'primary', 'primary', 'التقييم الأول', 'نهاية تقييم الفترة الأولى للصفوف من الأول إلى الخامس.', true),
     (sid, v_year_id, date '2026-11-15', date '2026-11-15', date '2026-11-15', 'special_day', 'academic', 'بداية تقييم الفترة الثانية', 'primary', 'primary', 'بداية التقييم الثاني', 'بداية تقييم الفترة الثانية للصفوف من الأول إلى الخامس.', true),
     (sid, v_year_id, date '2027-01-14', date '2027-01-14', date '2027-01-14', 'special_day', 'exam', 'نهاية تقييم الفترة الثانية', 'primary', 'primary', 'التقييم الثاني', 'نهاية تقييم الفترة الثانية للصفوف من الأول إلى الخامس.', true),
-    (sid, v_year_id, date '2027-01-17', date '2027-01-17', date '2027-01-17', 'special_day', 'academic', 'بداية تقييم الفترة الثالثة', 'primary', 'primary', 'بداية التقييم الثالث', 'بداية تقييم الفترة الثالثة للصفوف من الأول إلى الخامس.', true),
-    (sid, v_year_id, date '2027-04-29', date '2027-04-29', date '2027-04-29', 'special_day', 'exam', 'نهاية تقييم الفترة الثالثة', 'primary', 'primary', 'التقييم الثالث', 'نهاية تقييم الفترة الثالثة للصفوف الأول والثاني والثالث.', true)
+    (sid, v_year_id, date '2027-01-17', date '2027-01-17', date '2027-01-17', 'special_day', 'academic', 'بداية تقييم الفترة الثالثة', 'primary', 'primary', 'بداية التقييم الثالث', 'بداية تقييم الفترة الثالثة للصفوف من الأول إلى الخامس.', true)
   on conflict (school_id, academic_year_id, exception_date) do update set
     start_date = excluded.start_date,
     end_date = excluded.end_date,
@@ -386,12 +388,12 @@ begin
     case when x.exam_included then 'continuous' else 'not_examined' end,
     x.exam_included
   from (values
-    ('G1','ISL',3,true),('G1','AR',6,true),('G1','EN',3,true),('G1','ICT',1,true),('G1','MATH',5,true),('G1','ART',1,false),('G1','PE',2,false),('G1','MUSIC_LIBRARY',1,false),
-    ('G2','ISL',3,true),('G2','AR',6,true),('G2','EN',3,true),('G2','ICT',1,true),('G2','MATH',5,true),('G2','ART',1,false),('G2','PE',2,false),('G2','MUSIC_LIBRARY',1,false),
-    ('G3','ISL',3,true),('G3','AR',7,true),('G3','EN',3,true),('G3','ICT',1,true),('G3','MATH',6,true),('G3','SCI',4,true),('G3','ART',1,false),('G3','PE',2,false),('G3','MUSIC_LIBRARY',1,false),
-    ('G4','ISL',3,true),('G4','AR',4,true),('G4','WRITING',2,true),('G4','EN',3,true),('G4','ICT',1,true),('G4','MATH',5,true),('G4','SCI',3,true),('G4','SOCIAL_HISTORY',1,true),('G4','SOCIAL_GEOGRAPHY',1,true),('G4','NATIONAL',1,true),('G4','ART',1,false),('G4','PE',1,false),('G4','MUSIC_LIBRARY',1,false),
-    ('G5','ISL',3,true),('G5','AR',4,true),('G5','WRITING',2,true),('G5','EN',3,true),('G5','ICT',1,true),('G5','MATH',5,true),('G5','SCI',3,true),('G5','SOCIAL_HISTORY',1,true),('G5','SOCIAL_GEOGRAPHY',1,true),('G5','NATIONAL',1,true),('G5','ART',1,false),('G5','PE',1,false),('G5','MUSIC_LIBRARY',1,false),
-    ('G6','ISL',3,true),('G6','AR',4,true),('G6','WRITING',2,true),('G6','EN',4,true),('G6','ICT',2,true),('G6','MATH',5,true),('G6','SCI',3,true),('G6','SOCIAL_HISTORY',1,true),('G6','SOCIAL_GEOGRAPHY',1,true),('G6','NATIONAL',1,true),('G6','ART',1,false),('G6','PE',1,false),('G6','MUSIC_LIBRARY',1,false),
+    ('G1','ISL',3,true),('G1','AR',6,true),('G1','EN',3,true),('G1','ICT',1,true),('G1','MATH',5,true),('G1','ART',1,false),('G1','PE',2,false),('G1','MENTAL_MATH',1,false),('G1','LIBRARY',1,false),('G1','SUPPLEMENTARY',1,false),('G1','MUSIC_LIBRARY',1,false),
+    ('G2','ISL',3,true),('G2','AR',6,true),('G2','EN',3,true),('G2','ICT',1,true),('G2','MATH',5,true),('G2','ART',1,false),('G2','PE',2,false),('G2','MENTAL_MATH',1,false),('G2','LIBRARY',1,false),('G2','SUPPLEMENTARY',1,false),('G2','MUSIC_LIBRARY',1,false),
+    ('G3','ISL',3,true),('G3','AR',7,true),('G3','EN',3,true),('G3','ICT',1,true),('G3','MATH',6,true),('G3','SCI',4,true),('G3','ART',1,false),('G3','PE',2,false),('G3','MENTAL_MATH',1,false),('G3','LIBRARY',1,false),('G3','SUPPLEMENTARY',1,false),('G3','MUSIC_LIBRARY',1,false),
+    ('G4','ISL',3,true),('G4','AR',4,true),('G4','WRITING',2,true),('G4','EN',3,true),('G4','ICT',1,true),('G4','MATH',5,true),('G4','SCI',3,true),('G4','SOCIAL_HISTORY',1,true),('G4','SOCIAL_GEOGRAPHY',1,true),('G4','NATIONAL',1,true),('G4','ART',1,false),('G4','PE',1,false),('G4','MENTAL_MATH',1,false),('G4','LIBRARY',1,false),('G4','SUPPLEMENTARY',1,false),('G4','MUSIC_LIBRARY',1,false),
+    ('G5','ISL',3,true),('G5','AR',4,true),('G5','WRITING',2,true),('G5','EN',3,true),('G5','ICT',1,true),('G5','MATH',5,true),('G5','SCI',3,true),('G5','SOCIAL_HISTORY',1,true),('G5','SOCIAL_GEOGRAPHY',1,true),('G5','NATIONAL',1,true),('G5','ART',1,false),('G5','PE',1,false),('G5','MENTAL_MATH',1,false),('G5','LIBRARY',1,false),('G5','SUPPLEMENTARY',1,false),('G5','MUSIC_LIBRARY',1,false),
+    ('G6','ISL',3,true),('G6','AR',4,true),('G6','WRITING',2,true),('G6','EN',4,true),('G6','ICT',2,true),('G6','MATH',5,true),('G6','SCI',3,true),('G6','SOCIAL_HISTORY',1,true),('G6','SOCIAL_GEOGRAPHY',1,true),('G6','NATIONAL',1,true),('G6','ART',1,false),('G6','PE',1,false),('G6','MENTAL_MATH',1,false),('G6','LIBRARY',1,false),('G6','SUPPLEMENTARY',1,false),('G6','MUSIC_LIBRARY',1,false),
     ('G7','ISL',2,true),('G7','AR',4,true),('G7','WRITING',2,true),('G7','EN',4,true),('G7','ICT',2,true),('G7','MATH',5,true),('G7','SCI',4,true),('G7','HISTORY',2,true),('G7','GEOGRAPHY',2,true),('G7','NATIONAL',1,true),('G7','ART',1,false),('G7','PE',1,false),('G7','MUSIC_LIBRARY',1,false),
     ('G8','ISL',2,true),('G8','AR',4,true),('G8','WRITING',2,true),('G8','EN',4,true),('G8','ICT',2,true),('G8','MATH',5,true),('G8','SCI',4,true),('G8','HISTORY',2,true),('G8','GEOGRAPHY',2,true),('G8','NATIONAL',1,true),('G8','ART',1,false),('G8','PE',1,false),('G8','MUSIC_LIBRARY',1,false),
     ('G9','ISL',2,true),('G9','AR',4,true),('G9','WRITING',2,true),('G9','EN',4,true),('G9','ICT',2,true),('G9','MATH',5,true),('G9','SCI',5,true),('G9','HISTORY',2,true),('G9','GEOGRAPHY',2,true),('G9','NATIONAL',1,true),('G9','ART',1,false),('G9','PE',1,false),('G9','MUSIC_LIBRARY',1,false)
@@ -473,3 +475,321 @@ set school_id = coalesce(
   end
 )
 where a.school_id is null;
+
+-- Repair only the known one-minute overlap in the seeded default day.
+update public.timetable_periods period_eight
+set start_time = time '12:15'
+where period_eight.period_number = 8
+  and period_eight.start_time = time '12:14'
+  and period_eight.end_time = time '12:55'
+  and exists (
+    select 1 from public.timetable_periods period_seven
+    where period_seven.school_id = period_eight.school_id
+      and period_seven.academic_year_id = period_eight.academic_year_id
+      and period_seven.period_number = 7
+      and period_seven.end_time = time '12:15'
+  );
+
+-- Preserve room names while materializing private school-scoped locations.
+insert into public.school_locations(school_id, name_ar, location_type, is_active)
+select distinct c.school_id, btrim(x.name_ar), 'classroom', true
+from public.classes c
+cross join lateral (values (c.room_name), (c.room)) as x(name_ar)
+where c.school_id is not null and nullif(btrim(x.name_ar), '') is not null
+on conflict (school_id, name_ar) do nothing;
+insert into public.school_locations(school_id, name_ar, location_type, is_active)
+select distinct c.school_id, btrim(coalesce(t.room_name, t.room)), 'other', true
+from public.timetable_entries t
+join public.classes c on c.id = t.class_id
+where c.school_id is not null
+  and nullif(btrim(coalesce(t.room_name, t.room)), '') is not null
+on conflict (school_id, name_ar) do nothing;
+update public.timetable_entries t
+set location_id = l.id,
+    room_name = coalesce(nullif(btrim(t.room_name), ''), nullif(btrim(t.room), ''))
+from public.classes c
+join public.school_locations l on l.school_id = c.school_id
+where c.id = t.class_id
+  and t.location_id is null
+  and l.name_ar = btrim(coalesce(t.room_name, t.room, ''));
+
+-- Add requested curriculum entries and missing sections without replacing
+-- existing subjects or changing any existing class/student assignment.
+do $$
+declare
+  v_school_id uuid;
+  v_quran_id uuid;
+  v_art_id uuid;
+  v_mental_math_id uuid;
+  v_library_id uuid;
+  v_supplementary_id uuid;
+  v_pe_id uuid;
+  v_year record;
+  v_grade record;
+begin
+  for v_school_id in
+    select distinct ss.school_id
+    from public.school_settings ss
+    where ss.school_id is not null
+  loop
+    select s.id into v_quran_id
+    from public.subjects s
+    where s.school_id = v_school_id
+      and (upper(coalesce(s.code, '')) = 'QURAN'
+        or s.name_ar in ('القرآن', 'القرآن الكريم'))
+    order by (upper(coalesce(s.code, '')) = 'QURAN') desc
+    limit 1;
+    if v_quran_id is null then
+      insert into public.subjects(school_id, code, name_ar, is_core, sort_order)
+      values (v_school_id, 'QURAN', 'القرآن الكريم', true, 3)
+      on conflict (school_id, name_ar) do update
+        set is_active = true, is_archived = false
+      returning id into v_quran_id;
+      if v_quran_id is null then
+        select id into v_quran_id from public.subjects
+        where school_id = v_school_id and name_ar = 'القرآن الكريم';
+      end if;
+    end if;
+
+    select s.id into v_art_id
+    from public.subjects s
+    where s.school_id = v_school_id
+      and (upper(coalesce(s.code, '')) in ('ART', 'DRAWING')
+        or s.name_ar in ('التربية الفنية', 'الرسم', 'التربية الفنية / الرسم'))
+    order by (upper(coalesce(s.code, '')) = 'ART') desc
+    limit 1;
+    if v_art_id is null then
+      insert into public.subjects(school_id, code, name_ar, is_core, sort_order)
+      values (v_school_id, 'ART', 'التربية الفنية', false, 9)
+      on conflict (school_id, name_ar) do update
+        set is_active = true, is_archived = false
+      returning id into v_art_id;
+      if v_art_id is null then
+        select id into v_art_id from public.subjects
+        where school_id = v_school_id and name_ar = 'التربية الفنية';
+      end if;
+    end if;
+
+    select s.id into v_pe_id
+    from public.subjects s
+    where s.school_id = v_school_id
+      and (upper(coalesce(s.code, '')) = 'PE'
+        or s.name_ar in (
+          'التربية البدنية', 'التربية البدنية (الرياضة)',
+          'التربية البدنية / الرياضة', 'الرياضة'
+        ))
+    order by (upper(coalesce(s.code, '')) = 'PE') desc
+    limit 1;
+    if v_pe_id is null then
+      insert into public.subjects(school_id, code, name_ar, is_core, sort_order)
+      values (v_school_id, 'PE', 'التربية البدنية', false, 10)
+      on conflict (school_id, name_ar) do update
+        set is_active = true, is_archived = false
+      returning id into v_pe_id;
+      if v_pe_id is null then
+        select id into v_pe_id from public.subjects
+        where school_id = v_school_id and name_ar = 'التربية البدنية';
+      end if;
+    end if;
+
+    select s.id into v_mental_math_id
+    from public.subjects s
+    where s.school_id = v_school_id
+      and (upper(coalesce(s.code, '')) = 'MENTAL_MATH'
+        or s.name_ar in ('الحساب الذهني', 'الرياضيات الذهنية'))
+    order by (upper(coalesce(s.code, '')) = 'MENTAL_MATH') desc
+    limit 1;
+    if v_mental_math_id is null then
+      insert into public.subjects(school_id, code, name_ar, is_core, sort_order)
+      values (v_school_id, 'MENTAL_MATH', 'الحساب الذهني', false, 11)
+      on conflict (school_id, name_ar) do update
+        set is_active = true, is_archived = false
+      returning id into v_mental_math_id;
+      if v_mental_math_id is null then
+        select id into v_mental_math_id from public.subjects
+        where school_id = v_school_id and name_ar = 'الحساب الذهني';
+      end if;
+    end if;
+
+    select s.id into v_library_id
+    from public.subjects s
+    where s.school_id = v_school_id
+      and (upper(coalesce(s.code, '')) = 'LIBRARY'
+        or s.name_ar in ('المكتبة', 'المكتبة - القراءة'))
+    order by (upper(coalesce(s.code, '')) = 'LIBRARY') desc
+    limit 1;
+    if v_library_id is null then
+      insert into public.subjects(school_id, code, name_ar, is_core, sort_order)
+      values (v_school_id, 'LIBRARY', 'المكتبة', false, 12)
+      on conflict (school_id, name_ar) do update
+        set is_active = true, is_archived = false
+      returning id into v_library_id;
+      if v_library_id is null then
+        select id into v_library_id from public.subjects
+        where school_id = v_school_id and name_ar = 'المكتبة';
+      end if;
+    end if;
+
+    select s.id into v_supplementary_id
+    from public.subjects s
+    where s.school_id = v_school_id
+      and (upper(coalesce(s.code, '')) in ('SUPPLEMENTARY', 'COMPLEMENTARY', 'EXTRA')
+        or s.name_ar in ('الحصة المكملة', 'المكملة'))
+    order by (upper(coalesce(s.code, '')) = 'SUPPLEMENTARY') desc
+    limit 1;
+    if v_supplementary_id is null then
+      insert into public.subjects(school_id, code, name_ar, is_core, sort_order)
+      values (v_school_id, 'SUPPLEMENTARY', 'الحصة المكملة', false, 13)
+      on conflict (school_id, name_ar) do update
+        set is_active = true, is_archived = false
+      returning id into v_supplementary_id;
+      if v_supplementary_id is null then
+        select id into v_supplementary_id from public.subjects
+        where school_id = v_school_id and name_ar = 'الحصة المكملة';
+      end if;
+    end if;
+
+    for v_year in
+      select y.id from public.academic_years y
+      where y.school_id = v_school_id and y.is_current
+        and y.status not in ('closed', 'archived', 'مغلقة', 'مؤرشفة')
+    loop
+      for v_grade in
+        select g.id, g.code, g.level_number
+        from public.school_grades g
+        where g.school_id = v_school_id
+          and g.code in ('G1','G2','G3','G4','G5','G6','G7','G8','G9')
+          and not g.is_archived
+      loop
+        insert into public.grade_subjects(
+          academic_year_id, grade_id, subject_id, max_score, pass_percentage,
+          coursework_weight, final_exam_weight, final_exam_min_pct,
+          weekly_periods, assessment_type, exam_included, is_active
+        ) values (
+          v_year.id, v_grade.id, v_quran_id, 100, 50, 30, 70, 40,
+          1,
+          'continuous', true, true
+        ) on conflict (academic_year_id, grade_id, subject_id) do update
+          set weekly_periods = coalesce(public.grade_subjects.weekly_periods, 1),
+              is_active = true, updated_at = now();
+
+        insert into public.grade_subjects(
+          academic_year_id, grade_id, subject_id, max_score, pass_percentage,
+          coursework_weight, final_exam_weight, final_exam_min_pct,
+          weekly_periods, assessment_type, exam_included, is_active
+        ) values (
+          v_year.id, v_grade.id, v_art_id, 100, 50, 100, 0, 0,
+          1, 'not_examined', false, true
+        ) on conflict (academic_year_id, grade_id, subject_id) do update
+          set weekly_periods = coalesce(public.grade_subjects.weekly_periods, 1),
+              is_active = true, updated_at = now();
+
+        insert into public.grade_subjects(
+          academic_year_id, grade_id, subject_id, max_score, pass_percentage,
+          coursework_weight, final_exam_weight, final_exam_min_pct,
+          weekly_periods, assessment_type, exam_included, is_active
+        ) values (
+          v_year.id, v_grade.id, v_pe_id, 100, 50, 100, 0, 0,
+          case when v_grade.level_number between 1 and 3 then 2 else 1 end,
+          'not_examined', false, true
+        ) on conflict (academic_year_id, grade_id, subject_id) do update
+          set weekly_periods = coalesce(public.grade_subjects.weekly_periods,
+            case when v_grade.level_number between 1 and 3 then 2 else 1 end),
+              is_active = true, updated_at = now();
+
+        insert into public.grade_subjects(
+          academic_year_id, grade_id, subject_id, max_score, pass_percentage,
+          coursework_weight, final_exam_weight, final_exam_min_pct,
+          weekly_periods, assessment_type, exam_included, is_active
+        ) values (
+          v_year.id, v_grade.id, v_mental_math_id, 100, 50, 100, 0, 0,
+          case when v_grade.level_number between 1 and 6 then 1 else 0 end,
+          'not_examined', false, true
+        ) on conflict (academic_year_id, grade_id, subject_id) do update
+          set weekly_periods = coalesce(public.grade_subjects.weekly_periods,
+            case when v_grade.level_number between 1 and 6 then 1 else 0 end),
+              is_active = true, updated_at = now();
+
+        insert into public.grade_subjects(
+          academic_year_id, grade_id, subject_id, max_score, pass_percentage,
+          coursework_weight, final_exam_weight, final_exam_min_pct,
+          weekly_periods, assessment_type, exam_included, is_active
+        ) values (
+          v_year.id, v_grade.id, v_library_id, 100, 50, 100, 0, 0,
+          case when v_grade.level_number between 1 and 6 then 1 else 0 end,
+          'not_examined', false, true
+        ) on conflict (academic_year_id, grade_id, subject_id) do update
+          set weekly_periods = coalesce(public.grade_subjects.weekly_periods,
+            case when v_grade.level_number between 1 and 6 then 1 else 0 end),
+              is_active = true, updated_at = now();
+
+        insert into public.grade_subjects(
+          academic_year_id, grade_id, subject_id, max_score, pass_percentage,
+          coursework_weight, final_exam_weight, final_exam_min_pct,
+          weekly_periods, assessment_type, exam_included, is_active
+        ) values (
+          v_year.id, v_grade.id, v_supplementary_id, 100, 50, 100, 0, 0,
+          case when v_grade.level_number between 1 and 6 then 1 else 0 end,
+          'not_examined', false, true
+        ) on conflict (academic_year_id, grade_id, subject_id) do update
+          set weekly_periods = coalesce(public.grade_subjects.weekly_periods,
+            case when v_grade.level_number between 1 and 6 then 1 else 0 end),
+              is_active = true, updated_at = now();
+
+        insert into public.classes(
+          school_id, academic_year_id, grade_id, section_code, section_name,
+          name_ar, capacity
+        )
+        select v_school_id, v_year.id, v_grade.id, section.code,
+               section.label, v_grade.level_number::text || '/' || section.label, 30
+        from (values ('A','أ'), ('B','ب')) as section(code, label)
+        where not exists (
+          select 1 from public.classes c
+          where c.academic_year_id = v_year.id and c.grade_id = v_grade.id
+            and (c.section_code = section.code
+              or c.name_ar = v_grade.level_number::text || '/' || section.label)
+        )
+        on conflict do nothing;
+      end loop;
+
+      insert into public.class_subjects(
+        class_id, academic_year_id, grade_id, subject_id,
+        grade_subject_id, weekly_periods, is_active
+      )
+      select c.id, gs.academic_year_id, gs.grade_id, gs.subject_id,
+             gs.id, gs.weekly_periods, true
+      from public.classes c
+      join public.grade_subjects gs
+        on gs.academic_year_id = c.academic_year_id
+       and gs.grade_id = c.grade_id
+      where c.school_id = v_school_id and c.academic_year_id = v_year.id
+        and gs.subject_id in (v_quran_id, v_art_id)
+        and c.is_active and not c.is_archived and gs.is_active
+      on conflict (class_id, subject_id) do update
+        set grade_subject_id = excluded.grade_subject_id,
+            weekly_periods = excluded.weekly_periods,
+            is_active = true;
+    end loop;
+  end loop;
+end;
+$$;
+
+-- Insert assessment defaults only if a school has no local configuration.
+insert into public.assessment_types(
+  school_id, code, name_ar, label_ar, component, weight_percent, sort_order, is_active
+)
+select settings.school_id, types.code, types.name_ar, types.label_ar,
+       'assessment', 0, types.sort_order, true
+from public.school_settings settings
+cross join (values
+  ('written', 'تقييم تحريري', 'تقييم تحريري', 10),
+  ('oral', 'تقييم شفهي', 'تقييم شفهي', 20),
+  ('practical', 'تقييم عملي', 'تقييم عملي', 30),
+  ('coursework', 'أعمال السنة', 'أعمال السنة', 40)
+) as types(code, name_ar, label_ar, sort_order)
+where settings.school_id is not null
+  and not exists (
+    select 1 from public.assessment_types existing
+    where existing.school_id = settings.school_id
+  )
+on conflict (school_id, name_ar) do nothing;

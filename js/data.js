@@ -56,28 +56,31 @@ export const schoolProfile = {
 };
 
 export const publicSections = [
-  { id: "about", title: "من نحن" },
-  { id: "vision", title: "الرؤية والرسالة" },
+  { id: "school", title: "المدرسة" },
+  { id: "portal-features", title: "بوابة الطالب" },
+  { id: "journey", title: "طريقة الاستخدام" },
   { id: "stages", title: "المراحل" },
-  { id: "services", title: "الخدمات" },
-  { id: "contact", title: "تواصل" },
+  { id: "faq", title: "أسئلة شائعة" },
 ];
 
 export const localPageCards = [
-  { label: "ملفي", icon: "👤", page: "profile" },
-  { label: "الحضور", icon: "📅", page: "attendance" },
-  { label: "النتائج", icon: "📊", page: "results" },
-  { label: "الرسوم", icon: "💳", page: "fees" },
-  { label: "الجدول", icon: "🗓️", page: "timetable" },
-  { label: "المنصات", icon: "💻", page: "platforms" },
+  { label: "ملخصي", icon: "layout-dashboard", page: "home" },
+  { label: "ملفي", icon: "user-round", page: "profile" },
+  { label: "الحضور", icon: "calendar-check", page: "attendance" },
+  {
+    label: "النتائج",
+    icon: "chart-no-axes-column-increasing",
+    page: "results",
+  },
+  { label: "الرسوم", icon: "wallet", page: "fees" },
+  { label: "الجدول", icon: "calendar-days", page: "timetable" },
+  { label: "الروابط", icon: "link-2", page: "platforms" },
 ];
 
-export const floatingIcons = [
+export const decorativeStickers = [
   "assets/icons/i1.png",
-  "assets/icons/i8.png",
-  "assets/icons/i13.png",
-  "assets/icons/i18.png",
-  "assets/icons/i22.png",
-  "assets/icons/i28.png",
-  "assets/icons/i31.png",
+  "assets/icons/i3.png",
+  "assets/icons/i4.png",
+  "assets/icons/i10.png",
+  "assets/icons/i16.png",
 ];

@@ -801,6 +801,158 @@ as $$
 	limit 1;
 $$;
 
+-- Authenticated student portal projection. Identity is resolved from the
+-- private Auth mapping and the RPC never accepts a caller-supplied student ID.
+create or replace function public.student_portal_data()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public, app, extensions, pg_temp
+as $$
+declare
+	v_student_id uuid;
+	v_enrollment_id uuid;
+begin
+	v_student_id := app.current_student_portal_id();
+	if v_student_id is null then
+		return null;
+	end if;
+
+	select e.id
+		into v_enrollment_id
+	from public.student_enrollments e
+	join public.academic_years y on y.id = e.academic_year_id
+	where e.student_id = v_student_id
+	order by y.is_current desc nulls last, e.enrollment_date desc nulls last, e.created_at desc
+	limit 1;
+
+	return jsonb_build_object(
+		'student', (
+			select jsonb_build_object(
+				'id', s.id,
+				'student_number', s.student_number,
+				'full_name', s.full_name,
+				'stage', ast.name_ar,
+				'grade', g.name_ar,
+				'section', coalesce(c.section_name, c.section_code, c.name_ar, ''),
+				'academic_year', coalesce(y.name_ar, y.label, y.code)
+			)
+			from public.students s
+			left join public.student_enrollments e on e.id = v_enrollment_id
+			left join public.academic_years y on y.id = e.academic_year_id
+			left join public.school_grades g on g.id = e.grade_id
+			left join public.academic_stages ast on ast.id = g.stage_id
+			left join public.classes c on c.id = e.class_id
+			where s.id = v_student_id
+		),
+		'attendance', jsonb_build_object(
+			'present', coalesce((
+				select count(*) from public.student_attendance a
+				left join public.attendance_statuses st on st.code = a.status_code
+				where a.enrollment_id = v_enrollment_id
+					and (st.counts_as_present or a.status in ('حاضر', 'present', 'attended'))
+			), 0),
+			'late', coalesce((
+				select count(*) from public.student_attendance a
+				where a.enrollment_id = v_enrollment_id
+					and (coalesce(a.minutes_late, 0) > 0 or a.status in ('متأخر', 'late'))
+			), 0),
+			'absent', coalesce((
+				select count(*) from public.student_attendance a
+				left join public.attendance_statuses st on st.code = a.status_code
+				where a.enrollment_id = v_enrollment_id
+					and not coalesce(st.counts_as_present, false)
+					and coalesce(a.minutes_late, 0) = 0
+					and a.status not in ('حاضر', 'present', 'attended', 'متأخر', 'late')
+			), 0),
+			'percent', coalesce((
+				select round(
+					100.0 * count(*) filter (where st.counts_as_present or a.status in ('حاضر', 'present', 'attended'))
+					/ nullif(count(*), 0)
+				)::integer
+				from public.student_attendance a
+				left join public.attendance_statuses st on st.code = a.status_code
+				where a.enrollment_id = v_enrollment_id
+			), 0),
+			'records', coalesce((
+				select jsonb_agg(item order by attendance_date desc)
+				from (
+					select jsonb_build_object(
+						'date', a.attendance_date,
+						'status', coalesce(st.label_ar, a.status, a.status_code, 'غير محدد'),
+						'minutes_late', coalesce(a.minutes_late, 0)
+					) as item, a.attendance_date
+					from public.student_attendance a
+					left join public.attendance_statuses st on st.code = a.status_code
+					where a.enrollment_id = v_enrollment_id
+					order by a.attendance_date desc
+					limit 20
+				) recent
+			), '[]'::jsonb)
+		),
+		'results', coalesce((
+			select jsonb_agg(jsonb_build_object(
+				'subject', sub.name_ar,
+				'percentage', sr.percentage,
+				'grade', coalesce(gb.label_ar, '—')
+			) order by sub.sort_order, sub.name_ar)
+			from public.subject_results sr
+			join public.term_results tr
+				on tr.enrollment_id = sr.enrollment_id
+			 and tr.round = sr.round
+			 and tr.status in ('approved', 'closed')
+			join public.grade_subjects gs on gs.id = sr.grade_subject_id
+			join public.subjects sub on sub.id = gs.subject_id
+			left join public.grade_bands gb on sr.percentage between gb.min_pct and gb.max_pct
+			where sr.enrollment_id = v_enrollment_id
+		), '[]'::jsonb),
+		'fees', coalesce((
+			select jsonb_agg(jsonb_build_object(
+				'label', coalesce(ft.name_ar, 'رسوم دراسية'),
+				'total', coalesce(f.net_amount, f.total_amount, 0),
+				'paid', coalesce(payments.paid, 0),
+				'remaining', greatest(coalesce(f.net_amount, f.total_amount, 0) - coalesce(payments.paid, 0), 0),
+				'status', case
+					when greatest(coalesce(f.net_amount, f.total_amount, 0) - coalesce(payments.paid, 0), 0) = 0 then 'مدفوع'
+					when coalesce(payments.paid, 0) > 0 then 'مدفوع جزئيًا'
+					else 'مستحق'
+				end
+			) order by ft.name_ar)
+			from public.student_fees f
+			left join public.fee_types ft on ft.id = f.fee_type_id
+			left join lateral (
+				select sum(i.paid_amount) as paid
+				from public.installments i
+				where i.student_fee_id = f.id
+			) payments on true
+			where f.enrollment_id = v_enrollment_id
+		), '[]'::jsonb),
+		'timetable', coalesce((
+			select jsonb_agg(jsonb_build_object(
+				'day_number', te.day_number,
+				'day', coalesce(wd.name_ar, te.day_of_week, 'غير محدد'),
+				'subject', sub.name_ar,
+				'teacher', emp.full_name,
+				'room', coalesce(te.room_name, te.room, c.room_name, c.room, ''),
+				'period', coalesce(tp.name_ar, 'الحصة'),
+				'start_time', tp.start_time,
+				'end_time', tp.end_time
+			) order by te.day_number, tp.period_number)
+			from public.timetable_entries te
+			join public.classes c on c.id = te.class_id
+			left join public.week_days wd on wd.day_number = te.day_number
+			left join public.timetable_periods tp on tp.id = te.period_id
+			left join public.subjects sub on sub.id = te.subject_id
+			left join public.employees emp on emp.id = te.employee_id
+			where te.class_id = (select e.class_id from public.student_enrollments e where e.id = v_enrollment_id)
+				and te.academic_year_id = (select e.academic_year_id from public.student_enrollments e where e.id = v_enrollment_id)
+				and te.is_active
+		), '[]'::jsonb)
+	);
+end;
+$$;
+
 create or replace function public.student_app_access_account_statuses(
 	p_student_ids uuid[] default null
 )
@@ -844,6 +996,9 @@ create or replace function public.record_login_failure(p_username text) returns 
 create or replace function public.next_student_number() returns text language plpgsql security definer set search_path=public,app,pg_temp as $$
 declare candidate bigint;
 begin
+	if auth.uid() is not null then
+		perform app.require_perm('students.create');
+	end if;
 	loop
 		candidate := nextval('public.student_number_seq');
 		exit when not exists (select 1 from public.students where student_number = candidate::text);
@@ -1139,13 +1294,6 @@ begin
 			) then
 				raise exception 'ولي الأمر المحدد غير موجود في المدرسة الحالية';
 			end if;
-			if nullif(btrim(coalesce(v_entry.value->>'guardian_app_login_status', '')), '') is not null then
-				update public.guardians
-				set guardian_app_login_status = lower(v_entry.value->>'guardian_app_login_status'),
-					guardian_app_login_enabled = lower(v_entry.value->>'guardian_app_login_status') in ('active','reset_required'),
-					updated_at = now()
-				where id = v_guardian_id and school_id = v_school_id;
-			end if;
 		else
 			select g.id into v_guardian_id
 			from public.guardians g
@@ -1164,7 +1312,7 @@ begin
 			limit 1;
 		end if;
 		if v_guardian_id is null then
-			insert into public.guardians(school_id,full_name,phone,national_id,notes,guardian_app_login_status,guardian_app_login_enabled)
+			insert into public.guardians(school_id,full_name,phone,national_id,notes)
 			values (
 				v_school_id,
 				v_guardian_name,
@@ -1176,9 +1324,7 @@ begin
 						then 'صلة القرابة: ' || btrim(v_entry.value->>'relationship_label')
 						else null
 					end
-				)), ''),
-				coalesce(nullif(lower(v_entry.value->>'guardian_app_login_status'), ''), 'not_created'),
-				coalesce((lower(v_entry.value->>'guardian_app_login_status') in ('active','reset_required')), false)
+				)), '')
 			)
 			returning id into v_guardian_id;
 		end if;
@@ -1337,11 +1483,14 @@ $$;
 
 create or replace function public.next_employee_number()
 returns text
-language sql
+language plpgsql
 security definer
 set search_path=public,app,pg_temp
 as $$
-	select public.next_employee_number(app.current_school_id());
+	begin
+		perform app.require_perm('employees.create');
+		return public.next_employee_number(app.current_school_id());
+	end;
 $$;
 
 create or replace function public.generate_employee_number()
@@ -2035,23 +2184,28 @@ language sql
 security definer
 set search_path=public,app,pg_temp
 as $$
-  select coalesce(
-    (
-      select s.is_school_day
-      from public.school_calendar_exceptions s
-      where s.academic_year_id = p_academic_year_id
-        and s.exception_date = p_attendance_date
-      order by s.updated_at desc, s.created_at desc
-      limit 1
-    ),
-    (
-      select w.is_school_day
-      from public.week_days w
-      where w.day_number = extract(dow from p_attendance_date)::smallint
-      limit 1
-    ),
-    false
-  );
+	select case when exists (
+		select 1 from public.academic_years y
+		where y.id = p_academic_year_id
+			and y.school_id = app.current_school_id()
+	) then coalesce(
+		(
+			select s.is_school_day
+			from public.school_calendar_exceptions s
+			where s.school_id = app.current_school_id()
+				and s.academic_year_id = p_academic_year_id
+				and s.exception_date = p_attendance_date
+			order by s.updated_at desc, s.created_at desc
+			limit 1
+		),
+		(
+			select w.is_school_day
+			from public.week_days w
+			where w.day_number = extract(dow from p_attendance_date)::smallint
+			limit 1
+		),
+		false
+	) else false end;
 $$;
 
 grant execute on function public.is_school_day_for_year(uuid,date) to authenticated;
@@ -2598,30 +2752,99 @@ $$;
 create or replace function public.completeness_report(p_entity_type text,p_entity_id uuid) returns jsonb language plpgsql stable security definer set search_path=public,app,pg_temp as $$ declare v_result jsonb; begin if p_entity_type <> 'students' then raise exception 'نوع السجل غير مدعوم'; end if; select to_jsonb(x) into v_result from public.student_completeness(p_entity_id) x; return v_result; end $$;
 create or replace function public.reverse_payment(p_payment_id uuid,p_reason text,p_idempotency_key text default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ declare p payments%rowtype; begin perform app.require_perm('finance.payments.reverse'); select * into p from payments where id=p_payment_id and school_id=app.current_school_id() for update; if not found or p.status<>'completed' then raise exception 'الدفعة غير قابلة للعكس'; end if; update payments set status='reversed',notes=concat_ws(' | ',notes,'سبب العكس: '||coalesce(nullif(btrim(p_reason),''),'غير محدد')) where id=p.id; update installments i set paid_amount=greatest(0,i.paid_amount-p.amount),status=case when greatest(0,i.paid_amount-p.amount)<=0 then 'pending'::app.installment_status when greatest(0,i.paid_amount-p.amount)>=i.net_due then 'paid'::app.installment_status else 'partial'::app.installment_status end where i.id=p.installment_id; insert into audit_logs(user_id,actor_id,action,entity_type,entity_id,old_value,new_value,description) values(auth.uid(),auth.uid(),'payment.reversed','payment',p.id::text,to_jsonb(p),jsonb_build_object('reason',p_reason),'تم عكس الدفعة'); return jsonb_build_object('payment_id',p.id,'reversed',true); end $$;
 create or replace function public.student_financial_summary(p_student_id uuid,p_academic_year_id uuid default null) returns jsonb language sql stable security definer set search_path=public,app,pg_temp as $$ with totals as (select se.academic_year_id,coalesce(sum(i.net_due),0) total_due,coalesce(sum(i.paid_amount),0) total_paid,coalesce(sum(i.remaining_amount),0) remaining from installments i join student_fees sf on sf.id=i.student_fee_id join student_enrollments se on se.id=sf.enrollment_id join students s on s.id=se.student_id where se.student_id=p_student_id and s.school_id=app.current_school_id() and app.has_any_perm('finance.payments.view','finance.payments.create','finance.fees.view','finance.fees.manage') and (p_academic_year_id is null or se.academic_year_id=p_academic_year_id) group by se.academic_year_id), current_row as (select t.*,y.code,y.name_ar,y.is_current from totals t join academic_years y on y.id=t.academic_year_id), previous as (select coalesce(jsonb_agg(jsonb_build_object('academic_year',coalesce(code,name_ar),'total_due',total_due,'total_paid',total_paid,'remaining',remaining) order by code desc),'[]'::jsonb) rows from current_row where is_current is distinct from true) select jsonb_build_object('current_year',coalesce((select jsonb_build_object('academic_year',coalesce(code,name_ar),'total_due',total_due,'total_paid',total_paid,'remaining',remaining) from current_row where is_current is true limit 1),'{}'::jsonb),'previous_years',(select rows from previous),'total_due',coalesce((select sum(total_due) from totals),0),'paid',coalesce((select sum(total_paid) from totals),0),'remaining',coalesce((select sum(remaining) from totals),0)) $$;
-create or replace function public.refresh_overdue_installments() returns integer language plpgsql security definer set search_path=public,app,pg_temp as $$ declare n integer; begin perform app.require_perm('finance.payments.view'); update installments set status='overdue' where due_date<current_date and paid_amount<net_due and status in ('pending','partial'); get diagnostics n=row_count; return n; end $$;
-create or replace function public.check_timetable_conflict(p_academic_year_id uuid,p_day_number smallint,p_period_id uuid,p_class_id uuid,p_employee_id uuid default null,p_room text default null,p_exclude_entry_id uuid default null) returns jsonb language sql stable security definer set search_path=public,app,pg_temp as $$
-with candidate as (
-  select p.start_time, p.end_time from public.timetable_periods p where p.id = p_period_id
-), overlaps as (
-  select t.id
-  from public.timetable_entries t
-  join public.timetable_periods tp on tp.id = t.period_id
-  join candidate c on true
-  where t.is_active
-    and t.id is distinct from p_exclude_entry_id
-    and t.academic_year_id = p_academic_year_id
-    and t.day_number = p_day_number
-    and (
-      t.class_id = p_class_id
-      or (p_employee_id is not null and t.employee_id = p_employee_id)
-      or (nullif(btrim(coalesce(p_room, '')), '') is not null and nullif(btrim(coalesce(t.room, '')), '') is not null and lower(btrim(t.room)) = lower(btrim(p_room)))
-    )
-    and not (tp.end_time <= c.start_time or c.end_time <= tp.start_time)
-)
-select jsonb_build_object('has_conflict', exists(select 1 from overlaps));
+create or replace function public.refresh_overdue_installments()
+returns integer
+language plpgsql
+security definer
+set search_path=public,app,pg_temp
+as $$
+declare
+	n integer;
+begin
+	perform app.require_perm('finance.payments.view');
+	update public.installments i
+	set status = 'overdue'
+	from public.student_fees f
+	join public.student_enrollments e on e.id = f.enrollment_id
+	join public.students s on s.id = e.student_id
+	where i.student_fee_id = f.id
+		and s.school_id = app.current_school_id()
+		and i.due_date < current_date
+		and i.paid_amount < i.net_due
+		and i.status in ('pending','partial');
+	get diagnostics n = row_count;
+	return n;
+end;
 $$;
-create or replace function public.suggest_timetable_slots(p_academic_year_id uuid,p_class_id uuid,p_employee_id uuid default null,p_room text default null,p_limit integer default 8) returns table(day_number smallint,day_name text,period_id uuid,period_name text) language sql stable security definer set search_path=public,app,pg_temp as $$ select d.day_number,d.name_ar,p.id,coalesce(p.name_ar,'الفترة '||p.period_number) from week_days d cross join timetable_periods p where d.is_school_day and p.academic_year_id=p_academic_year_id and p.is_active and not exists(select 1 from timetable_entries t where t.is_active and t.day_number=d.day_number and t.period_id=p.id and(t.class_id=p_class_id or(p_employee_id is not null and t.employee_id=p_employee_id) or(p_room is not null and t.room=p_room))) order by d.sort_order,p.period_number limit p_limit $$;
-create or replace function public.add_timetable_entry(p_academic_year_id uuid,p_day_number smallint,p_period_id uuid,p_class_id uuid,p_class_subject_id uuid,p_employee_id uuid default null,p_room text default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ declare c jsonb; x uuid; begin perform app.require_perm('timetable.manage'); c:=public.check_timetable_conflict(p_academic_year_id,p_day_number,p_period_id,p_class_id,p_employee_id,p_room); insert into timetable_entries(academic_year_id,day_number,period_id,class_id,class_subject_id,employee_id,room,created_by) values(p_academic_year_id,p_day_number,p_period_id,p_class_id,p_class_subject_id,p_employee_id,p_room,auth.uid()) returning id into x; return c || jsonb_build_object('id',x,'saved',true,'warning', case when (c->>'has_conflict')::boolean then 'تم حفظ الحصة مع تحذير تعارض في الجدول. راجع الإسناد قبل الاعتماد.' else null end); end $$;
+create or replace function public.suggest_timetable_slots(
+	p_academic_year_id uuid,
+	p_class_id uuid,
+	p_employee_id uuid default null,
+	p_room text default null,
+	p_limit integer default 8
+)
+returns table(day_number smallint, day_name text, period_id uuid, period_name text)
+language sql
+stable
+security definer
+set search_path=public,app,pg_temp
+as $$
+	select d.day_number, d.name_ar, p.id, coalesce(p.name_ar, 'الفترة ' || p.period_number)
+	from public.academic_years y
+	join public.classes c
+		on c.academic_year_id = y.id
+	 and c.school_id = y.school_id
+	join public.timetable_periods p
+		on p.academic_year_id = y.id
+	 and p.school_id = y.school_id
+	cross join public.week_days d
+	where y.id = p_academic_year_id
+		and y.school_id = app.current_school_id()
+		and c.id = p_class_id
+		and c.is_active
+		and not c.is_archived
+		and app.has_perm('timetable.manage')
+		and d.is_school_day
+		and p.is_active
+		and not p.is_break
+		and (
+			p_employee_id is null
+			or exists (
+				select 1 from public.employees e
+				where e.id = p_employee_id
+					and e.school_id = y.school_id
+					and e.is_teacher
+					and e.employment_status in ('active','on_leave')
+					and not coalesce(e.is_archived, false)
+			)
+		)
+		and not exists (
+			select 1
+			from public.timetable_entries t
+			join public.classes occupied_class
+				on occupied_class.id = t.class_id
+			 and occupied_class.school_id = y.school_id
+			 and occupied_class.academic_year_id = y.id
+			where t.is_active
+				and t.academic_year_id = y.id
+				and t.day_number = d.day_number
+				and t.period_id = p.id
+				and (
+					t.class_id = c.id
+					or (p_employee_id is not null and t.employee_id = p_employee_id)
+					or (
+						nullif(btrim(coalesce(p_room, '')), '') is not null
+						and lower(btrim(coalesce(t.room, ''))) = lower(btrim(p_room))
+					)
+				)
+		)
+	order by d.sort_order, p.period_number
+	limit least(greatest(coalesce(p_limit, 8), 1), 50);
+$$;
+
+-- Materialize class-level timetable subjects from the grade curriculum.
+-- The current-school check and permission guard are required because this
+-- SECURITY DEFINER RPC writes to a table normally restricted to administrators.
 create or replace function public.clone_year_structure(
 	p_source_year uuid,
 	p_target_year uuid,
@@ -2632,6 +2855,9 @@ security definer
 set search_path=public,app,pg_temp
 as $$
 declare
+	v_school_id uuid := app.current_school_id();
+	v_source_year public.academic_years%rowtype;
+	v_target_year public.academic_years%rowtype;
 	source_class record;
 	source_grade_subject record;
 	target_class_id uuid;
@@ -2641,12 +2867,36 @@ declare
 	class_subjects_created integer := 0;
 begin
 	perform app.require_perm('academic_years.manage');
+	if v_school_id is null then
+		raise exception 'تعذر تحديد المدرسة الحالية.' using errcode='42501';
+	end if;
 	if p_source_year = p_target_year then
 		raise exception 'لا يمكن نسخ السنة إلى نفسها';
 	end if;
+	select * into v_source_year
+	from public.academic_years
+	where id = p_source_year and school_id = v_school_id;
+	if not found then
+		raise exception 'السنة المصدر غير موجودة في المدرسة الحالية.' using errcode='P0001';
+	end if;
+	select * into v_target_year
+	from public.academic_years
+	where id = p_target_year and school_id = v_school_id;
+	if not found then
+		raise exception 'السنة الهدف غير موجودة في المدرسة الحالية.' using errcode='P0001';
+	end if;
+	if v_target_year.status in ('closed','archived','مغلقة','مؤرشفة') then
+		raise exception 'لا يمكن نسخ الهيكل إلى سنة مغلقة أو مؤرشفة.' using errcode='P0001';
+	end if;
 
 	for source_grade_subject in
-		select * from public.grade_subjects where academic_year_id = p_source_year
+		select gs.*
+		from public.grade_subjects gs
+		join public.school_grades g
+			on g.id = gs.grade_id and g.school_id = v_school_id
+		join public.subjects s
+			on s.id = gs.subject_id and s.school_id = v_school_id
+		where gs.academic_year_id = p_source_year
 	loop
 		insert into public.grade_subjects (
 			academic_year_id, grade_id, subject_id, max_score,
@@ -2668,7 +2918,8 @@ begin
 	end loop;
 
 	for source_class in
-		select * from public.classes where academic_year_id = p_source_year
+		select * from public.classes
+		where academic_year_id = p_source_year and school_id = v_school_id
 	loop
 		select c.id into target_class_id
 		from public.classes c
@@ -2790,8 +3041,86 @@ end;
 $$;
 create or replace function public.graduate_student(p_student_id uuid,p_academic_year_id uuid,p_graduation_date date default current_date,p_notes text default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ declare v_school_id uuid:=app.current_school_id(); v_student public.students%rowtype; v_updated integer; begin perform app.require_perm('students.archive'); select s.* into v_student from public.students s join public.academic_years y on y.id=p_academic_year_id and y.school_id=s.school_id where s.id=p_student_id and s.school_id=v_school_id for update of s; if not found then raise exception 'الطالب أو السنة الدراسية غير موجودين في المدرسة الحالية'; end if; update public.student_enrollments set outcome='graduated' where student_id=p_student_id and academic_year_id=p_academic_year_id; get diagnostics v_updated=row_count; if v_updated=0 then raise exception 'لا يوجد تسجيل للطالب في السنة المحددة'; end if; update public.students set educational_status='graduated',graduation_date=coalesce(p_graduation_date,current_date) where id=p_student_id and school_id=v_school_id; if nullif(btrim(coalesce(p_notes,'')),'') is not null then insert into public.student_notes(student_id,note_type,note_text,created_by) values(p_student_id,'academic',btrim(p_notes),auth.uid()); end if; return jsonb_build_object('graduated',true,'graduation_date',coalesce(p_graduation_date,current_date)); end $$;
 create or replace function public.change_student_file_status(p_student_id uuid,p_action text,p_reason text,p_academic_year_id uuid default null,p_delivered_to_name text default null,p_delivered_to_relationship text default null,p_delivered_to_id_number text default null,p_delivered_to_guardian_id uuid default null,p_transaction_date date default current_date,p_notes text default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ declare v_school_id uuid:=app.current_school_id(); old text; newv text; begin perform app.require_perm('students.file.withdraw'); if nullif(btrim(coalesce(p_reason,'')),'') is null then raise exception 'سبب تغيير حالة الملف مطلوب'; end if; select file_status into old from public.students where id=p_student_id and school_id=v_school_id for update; if not found then raise exception 'الطالب غير موجود في المدرسة الحالية'; end if; if p_academic_year_id is not null and not exists(select 1 from public.academic_years where id=p_academic_year_id and school_id=v_school_id) then raise exception 'السنة الدراسية لا تنتمي إلى المدرسة الحالية'; end if; if p_delivered_to_guardian_id is not null and not exists(select 1 from public.student_guardians sg join public.guardians g on g.id=sg.guardian_id where sg.student_id=p_student_id and sg.guardian_id=p_delivered_to_guardian_id and g.school_id=v_school_id) then raise exception 'ولي الأمر غير مرتبط بالطالب في المدرسة الحالية'; end if; newv=case p_action when 'mark_ready' then 'ready' when 'deliver' then 'delivered' when 'withdraw' then 'withdrawn' when 'return' then 'at_school' else null end; if newv is null then raise exception 'إجراء حالة الملف غير صالح'; end if; update public.students set file_status=newv where id=p_student_id and school_id=v_school_id; insert into public.student_file_transactions(student_id,academic_year_id,action,previous_status,new_status,reason,delivered_to_name,delivered_to_relationship,delivered_to_id_number,delivered_to_guardian_id,handled_by,transaction_date,notes) values(p_student_id,p_academic_year_id,p_action,old,newv,btrim(p_reason),p_delivered_to_name,p_delivered_to_relationship,p_delivered_to_id_number,p_delivered_to_guardian_id,auth.uid(),coalesce(p_transaction_date,current_date),p_notes); return jsonb_build_object('new_status',newv); end $$;
-create or replace function public.create_document_version(p_document_id uuid,p_content_html text default null,p_storage_path text default null,p_file_hash text default null,p_file_size_bytes bigint default null,p_mime_type text default null,p_data_snapshot jsonb default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ declare n integer; v uuid; begin perform app.require_perm('documents.upload'); select coalesce(max(version_number),0)+1 into n from document_versions where document_id=p_document_id; insert into document_versions(document_id,version_number,content_html,storage_path,file_hash,file_size_bytes,mime_type,data_snapshot,created_by) values(p_document_id,n,p_content_html,p_storage_path,p_file_hash,p_file_size_bytes,p_mime_type,p_data_snapshot,auth.uid()) returning id into v; update documents set current_version_id=v,status='pending_approval' where id=p_document_id; return jsonb_build_object('id',v,'version_number',n); end $$;
-create or replace function public.decide_document(p_document_id uuid,p_decision text,p_note text default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ begin perform app.require_perm('documents.approve'); update documents set status=case when p_decision='approved' then 'approved'::app.document_status when p_decision='rejected' then 'rejected'::app.document_status else status end where id=p_document_id; return jsonb_build_object('document_id',p_document_id,'decision',p_decision); end $$;
+create or replace function public.create_document_version(
+	p_document_id uuid,
+	p_content_html text default null,
+	p_storage_path text default null,
+	p_file_hash text default null,
+	p_file_size_bytes bigint default null,
+	p_mime_type text default null,
+	p_data_snapshot jsonb default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public,app,pg_temp
+as $$
+declare
+	v_document public.documents%rowtype;
+	v_version_number integer;
+	v_version_id uuid;
+begin
+	perform app.require_perm('documents.upload');
+	select d.* into v_document
+	from public.documents d
+	where d.id = p_document_id
+		and d.school_id = app.current_school_id()
+	for update;
+	if not found then
+		raise exception 'المستند غير موجود في المدرسة الحالية أو لا تملك صلاحية الوصول إليه.'
+			using errcode='P0001';
+	end if;
+
+	select coalesce(max(dv.version_number), 0) + 1
+		into v_version_number
+	from public.document_versions dv
+	where dv.document_id = p_document_id;
+	insert into public.document_versions(
+		document_id, version_number, content_html, storage_path, file_hash,
+		file_size_bytes, mime_type, data_snapshot, created_by
+	) values (
+		p_document_id, v_version_number, p_content_html, p_storage_path, p_file_hash,
+		p_file_size_bytes, p_mime_type, p_data_snapshot, auth.uid()
+	) returning id into v_version_id;
+	update public.documents
+	set current_version_id = v_version_id, status = 'pending_approval'
+	where id = p_document_id and school_id = v_document.school_id;
+	return jsonb_build_object('id',v_version_id,'version_number',v_version_number);
+end;
+$$;
+
+create or replace function public.decide_document(
+	p_document_id uuid,
+	p_decision text,
+	p_note text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public,app,pg_temp
+as $$
+declare
+	v_document_id uuid;
+begin
+	perform app.require_perm('documents.approve');
+	if p_decision is null or p_decision not in ('approved','rejected') then
+		raise exception 'قرار المستند غير صالح.' using errcode='22023';
+	end if;
+	update public.documents
+	set status = case
+		when p_decision = 'approved' then 'approved'::app.document_status
+		else 'rejected'::app.document_status
+	end
+	where id = p_document_id
+		and school_id = app.current_school_id()
+	returning id into v_document_id;
+	if v_document_id is null then
+		raise exception 'المستند غير موجود في المدرسة الحالية أو لا تملك صلاحية الوصول إليه.'
+			using errcode='P0001';
+	end if;
+	return jsonb_build_object('document_id',v_document_id,'decision',p_decision);
+end;
+$$;
 drop function if exists public.record_backup_created(text,bigint,text);
 create function public.record_backup_created(
 	p_checksum_sha256 text,
@@ -3035,13 +3364,167 @@ begin
 	);
 end $$;
 
-create or replace function public.list_social_cases(p_status app.social_case_status default null,p_query text default null) returns table(id uuid,student_id uuid,student_name text,category text,priority app.social_case_priority,status app.social_case_status,summary text,opened_date date,assigned_to uuid,version integer) language sql security definer set search_path=public,app,pg_temp as $$ select c.id,c.student_id,s.full_name,coalesce(c.category,c.case_type),c.priority,c.status,c.summary,c.opened_date,c.assigned_to,c.version from social_cases c join students s on s.id=c.student_id where s.school_id = app.current_school_id() and app.has_any_perm('social.view','social.manage') and (p_status is null or c.status=p_status) and (p_query is null or btrim(p_query) = '' or s.full_name ilike '%'||p_query||'%') order by c.opened_date desc, c.created_at desc $$;
-create or replace function public.get_social_case(p_case_id uuid) returns jsonb language sql security definer set search_path=public,app,pg_temp as $$ select jsonb_build_object('case',to_jsonb(c),'student',to_jsonb(s),'notes',coalesce((select jsonb_agg(to_jsonb(n) order by n.created_at desc) from public.social_case_notes n where n.case_id = c.id or n.social_case_id = c.id),'[]'::jsonb)) from social_cases c join students s on s.id=c.student_id where c.id=p_case_id and s.school_id = app.current_school_id() and app.has_any_perm('social.view','social.manage') $$;
-create or replace function public.create_social_case(p_student_id uuid,p_academic_year_id uuid,p_category_id uuid default null,p_priority app.social_case_priority default 'medium',p_summary text default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ declare v_case_id uuid; begin perform app.require_perm('social.manage'); if p_student_id is null then raise exception 'يجب اختيار الطالب.' using errcode='P0001'; end if; if not exists (select 1 from public.students s where s.id = p_student_id and s.school_id = app.current_school_id()) then raise exception 'لا يملك الطالب نفس مدرسة المستخدم الحالي.' using errcode='P0001'; end if; insert into public.social_cases(school_id,student_id,academic_year_id,category_id,priority,summary,status,opened_date,opened_by,created_at,version) values(app.current_school_id(),p_student_id,p_academic_year_id,p_category_id,p_priority,nullif(btrim(p_summary),''),'open',current_date,auth.uid(),now(),1) returning id into v_case_id; return jsonb_build_object('id',v_case_id,'created',true); end $$;
-create or replace function public.add_social_case_note(p_case_id uuid,p_note_type text default 'note',p_note text default null,p_action text default null,p_follow_up_date date default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ declare v_note_id uuid; begin perform app.require_perm('social.manage'); if p_case_id is null then raise exception 'معرّف الحالة مطلوب.' using errcode='P0001'; end if; if nullif(btrim(coalesce(p_note,'')), '') is null then raise exception 'نص الملاحظة مطلوب.' using errcode='P0001'; end if; insert into public.social_case_notes(case_id,social_case_id,note,action_taken,follow_up_date,created_by) values(p_case_id,p_case_id,p_note,nullif(btrim(p_action),''),p_follow_up_date,auth.uid()) returning id into v_note_id; return jsonb_build_object('id',v_note_id,'created',true); end $$;
+create or replace function public.get_social_case(p_case_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public,app,pg_temp
+as $$
+declare
+	v_school_id uuid := app.current_school_id();
+	v_actor_label text;
+	v_result jsonb;
+begin
+	if not app.has_any_perm('social.view','social.manage') then
+		return null;
+	end if;
+	select jsonb_build_object(
+		'case', to_jsonb(c),
+		'student', to_jsonb(s),
+		'notes', coalesce((
+			select jsonb_agg(to_jsonb(n) order by n.created_at desc)
+			from public.social_case_notes n
+			where n.case_id = c.id or n.social_case_id = c.id
+		), '[]'::jsonb)
+	) into v_result
+	from public.social_cases c
+	join public.students s on s.id = c.student_id
+	where c.id = p_case_id
+		and coalesce(c.school_id, s.school_id) = v_school_id
+		and s.school_id = v_school_id;
+	if v_result is null then
+		return null;
+	end if;
+	select coalesce(nullif(btrim(p.full_name), ''), p.username)
+	into v_actor_label
+	from public.profiles p
+	where p.id = auth.uid();
+	insert into public.audit_logs(
+		user_id, actor_id, actor_label, action, entity_type, entity_id,
+		school_id, description, metadata
+	) values (
+		auth.uid(), auth.uid(), v_actor_label, 'SENSITIVE_ACCESS',
+		'social_case', p_case_id::text, v_school_id,
+		'تم عرض تفاصيل حالة اجتماعية', jsonb_build_object('school_id', v_school_id)
+	);
+	return v_result;
+end;
+$$;
+create or replace function public.create_social_case(p_student_id uuid,p_academic_year_id uuid,p_category_id uuid default null,p_priority app.social_case_priority default 'medium',p_summary text default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ declare v_case_id uuid; begin perform app.require_perm('social.manage'); if p_student_id is null then raise exception 'يجب اختيار الطالب.' using errcode='P0001'; end if; if not exists (select 1 from public.students s where s.id = p_student_id and s.school_id = app.current_school_id()) then raise exception 'لا يملك الطالب نفس مدرسة المستخدم الحالي.' using errcode='P0001'; end if; if p_academic_year_id is not null and not exists (select 1 from public.academic_years y where y.id = p_academic_year_id and y.school_id = app.current_school_id()) then raise exception 'السنة الدراسية لا تنتمي إلى المدرسة الحالية.' using errcode='P0001'; end if; insert into public.social_cases(school_id,student_id,academic_year_id,category_id,priority,summary,status,opened_date,opened_by,created_at,version) values(app.current_school_id(),p_student_id,p_academic_year_id,p_category_id,p_priority,nullif(btrim(p_summary),''),'open',current_date,auth.uid(),now(),1) returning id into v_case_id; return jsonb_build_object('id',v_case_id,'created',true); end $$;
+create or replace function public.add_social_case_note(
+	p_case_id uuid,
+	p_note_type text default 'note',
+	p_note text default null,
+	p_action text default null,
+	p_follow_up_date date default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public,app,pg_temp
+as $$
+declare
+	v_note_id uuid;
+begin
+	perform app.require_perm('social.manage');
+	if p_case_id is null then
+		raise exception 'معرّف الحالة مطلوب.' using errcode='P0001';
+	end if;
+	if not exists (
+		select 1
+		from public.social_cases c
+		join public.students s on s.id = c.student_id
+		where c.id = p_case_id
+			and c.school_id = app.current_school_id()
+			and s.school_id = app.current_school_id()
+	) then
+		raise exception 'الحالة الاجتماعية غير موجودة في المدرسة الحالية أو لا تملك صلاحية الوصول إليها.'
+			using errcode='P0001';
+	end if;
+	if nullif(btrim(coalesce(p_note,'')), '') is null then
+		raise exception 'نص الملاحظة مطلوب.' using errcode='P0001';
+	end if;
+	insert into public.social_case_notes(
+		case_id, social_case_id, note, action_taken, follow_up_date, created_by
+	) values (
+		p_case_id, p_case_id, p_note, nullif(btrim(p_action),''), p_follow_up_date, auth.uid()
+	) returning id into v_note_id;
+	return jsonb_build_object('id',v_note_id,'created',true);
+end;
+$$;
 create or replace function public.update_social_case_status(p_case_id uuid,p_new_status app.social_case_status,p_closure_summary text default null,p_expected_version integer default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ declare v_version integer; begin perform app.require_perm('social.manage'); select version into v_version from public.social_cases where id = p_case_id and school_id = app.current_school_id(); if v_version is null then raise exception 'الحالة غير موجودة أو غير مصرح بها.' using errcode='P0001'; end if; if p_expected_version is not null and v_version <> p_expected_version then raise exception 'تم تعديل الحالة من مستخدم آخر. حدّث القائمة ثم أعد المحاولة.' using errcode='P0001'; end if; update public.social_cases set status = p_new_status, closed_date = case when p_new_status = 'closed' then current_date else null end, closure_summary = case when p_new_status = 'closed' then nullif(btrim(p_closure_summary), '') else null end, version = version + 1, updated_at = now() where id = p_case_id; return jsonb_build_object('updated',true,'status',p_new_status); end $$;
-create or replace function public.save_employee_attendance(p_date date,p_records jsonb,p_idempotency_key text default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ declare x jsonb; n integer:=0; v_year_id uuid; begin perform app.require_perm('attendance.employees.manage'); if p_date is null then raise exception 'تاريخ الحضور مطلوب'; end if; v_year_id := (select id from public.academic_years where school_id = app.current_school_id() and status in ('draft','active') order by start_date desc limit 1); if v_year_id is null then raise exception 'لا توجد سنة دراسية نشطة للمدرسة الحالية.'; end if; if not public.is_school_day_for_year(v_year_id, p_date) then raise exception 'لا يمكن تسجيل حضور الموظفين في يوم غير دراسي أو عطلة. يرجى اختيار يوم مدرسي.'; end if; for x in select * from jsonb_array_elements(coalesce(p_records,'[]')) loop insert into employee_attendance(employee_id,attendance_date,status,status_code,notes,recorded_by) values((x->>'employee_id')::uuid,p_date,coalesce(x->>'status',x->>'status_code'),coalesce(x->>'status',x->>'status_code'),x->>'notes',auth.uid()) on conflict(employee_id,attendance_date) do update set status=excluded.status,status_code=excluded.status_code,notes=excluded.notes; n:=n+1; end loop; return jsonb_build_object('saved',n,'total',n); end $$;
-create or replace function public.generate_payroll(p_period_id uuid,p_idempotency_key text default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ declare n integer; begin perform app.require_perm('payroll.manage'); if not exists(select 1 from payroll_periods where id=p_period_id and school_id=app.current_school_id() and status='draft') then raise exception 'فترة الرواتب غير صالحة أو ليست مسودة'; end if; insert into payroll_entries(payroll_period_id,employee_id) select p_period_id,id from employees where school_id=app.current_school_id() and not is_archived on conflict(payroll_period_id,employee_id) do nothing; get diagnostics n=row_count; update payroll_periods set status='calculated' where id=p_period_id; return jsonb_build_object('entries',n); end $$;
+create or replace function public.save_employee_attendance(
+	p_date date,
+	p_records jsonb,
+	p_idempotency_key text default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path=public,app,pg_temp
+as $$
+declare
+	x jsonb;
+	n integer := 0;
+	v_year_id uuid;
+	v_employee_id uuid;
+	v_status text;
+begin
+	perform app.require_perm('attendance.employees.manage');
+	if p_date is null then
+		raise exception 'تاريخ الحضور مطلوب';
+	end if;
+	if p_date > current_date then
+		raise exception 'لا يمكن تسجيل حضور الموظفين بتاريخ مستقبلي.' using errcode='P0023';
+	end if;
+	if jsonb_typeof(coalesce(p_records, '[]'::jsonb)) is distinct from 'array' then
+		raise exception 'قائمة حضور الموظفين غير صالحة.' using errcode='22023';
+	end if;
+	v_year_id := (
+		select y.id from public.academic_years y
+		where y.school_id = app.current_school_id()
+			and y.status in ('draft','active')
+		order by y.start_date desc limit 1
+	);
+	if v_year_id is null then
+		raise exception 'لا توجد سنة دراسية نشطة للمدرسة الحالية.';
+	end if;
+	if not public.is_school_day_for_year(v_year_id, p_date) then
+		raise exception 'لا يمكن تسجيل حضور الموظفين في يوم غير دراسي أو عطلة. يرجى اختيار يوم مدرسي.';
+	end if;
+
+	for x in select value from jsonb_array_elements(coalesce(p_records, '[]'::jsonb)) loop
+		v_employee_id := nullif(x->>'employee_id', '')::uuid;
+		if v_employee_id is null or not exists (
+			select 1 from public.employees e
+			where e.id = v_employee_id
+				and e.school_id = app.current_school_id()
+				and not coalesce(e.is_archived, false)
+				and e.employment_status in ('active','on_leave')
+		) then
+			raise exception 'الموظف غير موجود في المدرسة الحالية أو غير مؤهل للحضور.'
+				using errcode='42501';
+		end if;
+		v_status := coalesce(nullif(x->>'status',''), nullif(x->>'status_code',''));
+		if v_status is null or not exists (
+			select 1 from public.employee_attendance_statuses s
+			where s.code = v_status and s.is_active
+		) then
+			raise exception 'حالة حضور الموظف غير صالحة.' using errcode='22023';
+		end if;
+		insert into public.employee_attendance(
+			employee_id, attendance_date, status, status_code, notes, recorded_by
+		) values (
+			v_employee_id, p_date, v_status, v_status, x->>'notes', auth.uid()
+		)
+		on conflict(employee_id, attendance_date) do update set
+			status=excluded.status,
+			status_code=excluded.status_code,
+			notes=excluded.notes;
+		n := n + 1;
+	end loop;
+	return jsonb_build_object('saved', n, 'total', n);
+end;
+$$;
 create or replace function public.approve_payroll(p_period_id uuid) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ begin perform app.require_perm('payroll.approve'); if not exists(select 1 from payroll_periods where id=p_period_id and school_id=app.current_school_id() and status='calculated') then raise exception 'فترة الرواتب غير صالحة للاعتماد'; end if; update payroll_periods set status='approved',approved_by=auth.uid(),approved_at=now() where id=p_period_id; return jsonb_build_object('approved',true); end $$;
 create or replace function public.student_grade_age_compatibility(p_student_id uuid,p_grade_id uuid) returns text
 language plpgsql
@@ -3209,7 +3692,6 @@ begin
 	);
 end $$;
 
-revoke all on function public.update_guardian_app_login_status(uuid,text,text) from public, anon;
 grant execute on function public.update_guardian_app_login_status(uuid,text,text) to authenticated;
 
 create or replace function public.register_student_enrollment(
@@ -3456,8 +3938,28 @@ revoke all on function public.register_student_enrollment(uuid,uuid,uuid,uuid,te
 grant execute on function public.register_student_enrollment(uuid,uuid,uuid,uuid,text,text,date,text) to authenticated;
 revoke all on function public.promote_class(uuid,uuid,jsonb,text) from public, anon;
 grant execute on function public.promote_class(uuid,uuid,jsonb,text) to authenticated;
-create or replace function public.update_timetable_entry(p_entry_id uuid,p_day_number smallint,p_period_id uuid,p_class_subject_id uuid,p_employee_id uuid default null,p_room text default null,p_expected_version integer default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ declare v_entry record; begin perform app.require_perm('timetable.manage'); select * into v_entry from timetable_entries where id = p_entry_id for update; if not found then return jsonb_build_object('updated',false,'warning','لم يتم العثور على الحصة المراد تعديلها.'); end if; update timetable_entries set day_number=p_day_number,period_id=p_period_id,class_subject_id=p_class_subject_id,employee_id=p_employee_id,room=p_room,version=version+1 where id=p_entry_id and (p_expected_version is null or version=p_expected_version); return jsonb_build_object('updated',found,'warning', case when exists (select 1 from timetable_entries t join timetable_periods tp on tp.id = t.period_id where t.is_active and t.id <> p_entry_id and t.academic_year_id = v_entry.academic_year_id and t.day_number = p_day_number and not (tp.end_time <= (select start_time from timetable_periods where id = p_period_id) or (select end_time from timetable_periods where id = p_period_id) <= tp.start_time) and (t.class_id = v_entry.class_id or (p_employee_id is not null and t.employee_id = p_employee_id) or (nullif(btrim(coalesce(p_room, '')), '') is not null and nullif(btrim(coalesce(t.room, '')), '') is not null and lower(btrim(t.room)) = lower(btrim(p_room)))) ) then 'تم حفظ التعديل مع تحذير تعارض في الجدول. راجع الإسناد قبل الاعتماد.' else null end); end $$;
-create or replace function public.deactivate_timetable_entry(p_entry_id uuid,p_expected_version integer default null) returns jsonb language plpgsql security definer set search_path=public,app,pg_temp as $$ begin perform app.require_perm('timetable.manage'); update timetable_entries set is_active=false,version=version+1 where id=p_entry_id and (p_expected_version is null or version=p_expected_version); return jsonb_build_object('updated',found); end $$;
+create or replace function public.deactivate_timetable_entry(
+	p_entry_id uuid,
+	p_expected_version integer default null
+) returns jsonb
+language plpgsql security definer
+set search_path=public,app,pg_temp
+as $$
+declare
+	v_school_id uuid := app.current_school_id();
+begin
+	perform app.require_perm('timetable.manage');
+	update public.timetable_entries t
+	set is_active = false, version = version + 1
+	from public.classes c
+	where t.class_id = c.id
+		and c.school_id = v_school_id
+		and t.id = p_entry_id
+		and t.is_active
+		and (p_expected_version is null or t.version = p_expected_version);
+	return jsonb_build_object('updated', found);
+end;
+$$;
 create or replace function public.generate_year_archive(
 	p_academic_year_id uuid,
 	p_idempotency_key text default null
@@ -3833,6 +4335,7 @@ as $$
 	join public.academic_years y on y.id = p_academic_year_id
 		and y.school_id = g.school_id
 		and y.school_id = app.current_school_id()
+		and app.has_perm('academics.structure.manage')
 	join (values
 		('G1', 22), ('G2', 22), ('G3', 28), ('G4', 27), ('G5', 27),
 		('G6', 29), ('G7', 31), ('G8', 31), ('G9', 32)
@@ -5019,6 +5522,584 @@ begin
 	return public.audit_logs_page(
 		p_action, p_entity_type, p_query, p_from, p_to,
 		p_page, p_page_size, p_ids, true
+	);
+end;
+$$;
+
+-- Consolidated trigger-function bodies from the former additive migrations.
+-- Location-aware, conflict-rejecting timetable RPC replacements.
+create or replace function public.check_timetable_conflict(
+	p_academic_year_id uuid,
+	p_day_number smallint,
+	p_period_id uuid,
+	p_class_id uuid,
+	p_employee_id uuid default null,
+	p_room text default null,
+	p_exclude_entry_id uuid default null
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path=public,app,pg_temp
+as $$
+declare
+	v_school_id uuid := app.current_school_id();
+	v_start_time time;
+	v_end_time time;
+	v_conflicts jsonb;
+begin
+	perform app.require_perm('timetable.manage');
+	if v_school_id is null or p_day_number is null or p_day_number not between 0 and 6 then
+		raise exception 'بيانات الجدول أو المدرسة الحالية غير صالحة.' using errcode='42501';
+	end if;
+	if not exists (
+		select 1 from public.classes c
+		where c.id = p_class_id and c.school_id = v_school_id
+			and c.academic_year_id = p_academic_year_id
+			and c.is_active and not c.is_archived
+	) then
+		raise exception 'الفصل أو السنة الدراسية غير موجودين في المدرسة الحالية.' using errcode='42501';
+	end if;
+	if p_employee_id is not null and not exists (
+		select 1 from public.employees e
+		where e.id = p_employee_id and e.school_id = v_school_id
+			and e.is_teacher and e.employment_status in ('active','on_leave')
+			and not coalesce(e.is_archived, false)
+	) then
+		raise exception 'المعلم المحدد غير موجود أو غير متاح في المدرسة الحالية.' using errcode='42501';
+	end if;
+	select p.start_time, p.end_time into v_start_time, v_end_time
+	from public.timetable_periods p
+	where p.id = p_period_id and p.school_id = v_school_id
+		and p.academic_year_id = p_academic_year_id
+		and p.is_active and not p.is_break;
+	if not found then
+		raise exception 'الحصة الزمنية غير موجودة أو لا تتبع السنة الحالية.' using errcode='42501';
+	end if;
+	select coalesce(jsonb_agg(jsonb_build_object(
+		'entry_id', t.id,
+		'message', case
+			when t.class_id = p_class_id then 'الفصل لديه حصة أخرى متداخلة في هذا الوقت.'
+			when p_employee_id is not null and t.employee_id = p_employee_id then 'المعلم مرتبط بحصة أخرى متداخلة في هذا الوقت.'
+			else 'المكان مرتبط بحصة أخرى متداخلة في هذا الوقت.'
+		end
+	)), '[]'::jsonb)
+	into v_conflicts
+	from public.timetable_entries t
+	join public.classes c on c.id = t.class_id
+		and c.school_id = v_school_id and c.academic_year_id = p_academic_year_id
+	join public.timetable_periods tp on tp.id = t.period_id
+		and tp.school_id = v_school_id and tp.academic_year_id = p_academic_year_id
+	left join public.school_locations current_location
+		on current_location.id = t.location_id
+	 and current_location.school_id = v_school_id
+	where t.is_active and t.id is distinct from p_exclude_entry_id
+		and t.academic_year_id = p_academic_year_id
+		and t.day_number = p_day_number
+		and (
+			t.class_id = p_class_id
+			or (p_employee_id is not null and t.employee_id = p_employee_id)
+			or (
+				nullif(btrim(coalesce(p_room, '')), '') is not null
+				and lower(btrim(coalesce(
+					nullif(btrim(t.room_name), ''), nullif(btrim(t.room), ''),
+					current_location.name_ar, ''
+				))) = lower(btrim(p_room))
+			)
+		)
+		and not (tp.end_time <= v_start_time or v_end_time <= tp.start_time);
+	return jsonb_build_object(
+		'has_conflict', jsonb_array_length(v_conflicts) > 0,
+		'conflicts', v_conflicts,
+		'alternatives', '[]'::jsonb
+	);
+end;
+$$;
+
+create or replace function public.add_timetable_entry(
+	p_academic_year_id uuid,
+	p_day_number smallint,
+	p_period_id uuid,
+	p_class_id uuid,
+	p_class_subject_id uuid,
+	p_employee_id uuid default null,
+	p_room text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public,app,pg_temp
+as $$
+declare
+	v_class public.classes%rowtype;
+	v_conflict jsonb;
+	v_entry_id uuid;
+	v_location_id uuid;
+	v_room text := nullif(btrim(p_room), '');
+begin
+	perform app.require_perm('timetable.manage');
+	select c.* into v_class from public.classes c
+	where c.id = p_class_id and c.academic_year_id = p_academic_year_id
+		and c.school_id = app.current_school_id() and c.is_active and not c.is_archived;
+	if not found then
+		raise exception 'الفصل أو السنة الدراسية غير موجودين في المدرسة الحالية.' using errcode='42501';
+	end if;
+	if not exists (
+		select 1 from public.class_subjects cs
+		where cs.id = p_class_subject_id and cs.class_id = v_class.id
+			and cs.academic_year_id = v_class.academic_year_id
+			and cs.grade_id = v_class.grade_id and cs.is_active
+	) then
+		raise exception 'المادة المحددة لا تتبع الفصل الحالي.' using errcode='42501';
+	end if;
+	perform pg_advisory_xact_lock(
+		hashtextextended(v_class.school_id::text || ':' || p_academic_year_id::text, 0)
+	);
+	if v_room is not null then
+		select l.id into v_location_id from public.school_locations l
+		where l.school_id = v_class.school_id and l.name_ar = v_room and l.is_active;
+	end if;
+	v_conflict := public.check_timetable_conflict(
+		p_academic_year_id, p_day_number, p_period_id, p_class_id, p_employee_id, v_room
+	);
+	if coalesce((v_conflict->>'has_conflict')::boolean, false) then
+		return v_conflict || jsonb_build_object(
+			'success', false, 'saved', false,
+			'message', 'يوجد تعارض مؤكد في الصف أو المعلم أو المكان؛ لم تُحفظ الحصة.'
+		);
+	end if;
+	insert into public.timetable_entries(
+		academic_year_id, day_number, period_id, class_id, class_subject_id,
+		employee_id, room, room_name, location_id, created_by
+	) values (
+		p_academic_year_id, p_day_number, p_period_id, p_class_id, p_class_subject_id,
+		p_employee_id, v_room, v_room, v_location_id, auth.uid()
+	) returning id into v_entry_id;
+	return v_conflict || jsonb_build_object(
+		'id', v_entry_id, 'saved', true, 'success', true, 'warning', null
+	);
+end;
+$$;
+
+create or replace function public.update_timetable_entry(
+	p_entry_id uuid,
+	p_day_number smallint,
+	p_period_id uuid,
+	p_class_subject_id uuid,
+	p_employee_id uuid default null,
+	p_room text default null,
+	p_expected_version integer default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public,app,pg_temp
+as $$
+declare
+	v_school_id uuid := app.current_school_id();
+	v_entry public.timetable_entries%rowtype;
+	v_conflict jsonb;
+	v_updated boolean := false;
+	v_location_id uuid;
+	v_room text := nullif(btrim(p_room), '');
+begin
+	perform app.require_perm('timetable.manage');
+	select t.* into v_entry from public.timetable_entries t
+	join public.classes c on c.id = t.class_id
+	where t.id = p_entry_id and c.school_id = v_school_id
+	for update of t;
+	if not found then
+		return jsonb_build_object('updated',false,'success',false,'message','لم يتم العثور على الحصة في المدرسة الحالية.');
+	end if;
+	perform pg_advisory_xact_lock(
+		hashtextextended(v_school_id::text || ':' || v_entry.academic_year_id::text, 0)
+	);
+	if not exists (
+		select 1 from public.class_subjects cs
+		join public.classes c on c.id = cs.class_id
+		where cs.id = p_class_subject_id and cs.class_id = v_entry.class_id
+			and cs.academic_year_id = v_entry.academic_year_id
+			and cs.grade_id = c.grade_id and cs.is_active
+	) then
+		raise exception 'المادة المحددة لا تتبع الفصل الحالي.' using errcode='42501';
+	end if;
+	if v_room is not null then
+		select l.id into v_location_id from public.school_locations l
+		where l.school_id = v_school_id and l.name_ar = v_room and l.is_active;
+	end if;
+	v_conflict := public.check_timetable_conflict(
+		v_entry.academic_year_id, p_day_number, p_period_id, v_entry.class_id,
+		p_employee_id, v_room, p_entry_id
+	);
+	if coalesce((v_conflict->>'has_conflict')::boolean, false) then
+		return v_conflict || jsonb_build_object(
+			'updated', false, 'success', false,
+			'message', 'يوجد تعارض مؤكد في الصف أو المعلم أو المكان؛ لم يُحفظ التعديل.'
+		);
+	end if;
+	update public.timetable_entries
+	set day_number = p_day_number, period_id = p_period_id,
+			class_subject_id = p_class_subject_id, employee_id = p_employee_id,
+			room = v_room, room_name = v_room, location_id = v_location_id,
+			version = version + 1
+	where id = p_entry_id
+		and (p_expected_version is null or version = p_expected_version)
+	returning true into v_updated;
+	return jsonb_build_object(
+		'updated', coalesce(v_updated, false), 'success', coalesce(v_updated, false),
+		'message', case when coalesce(v_updated, false) then null
+			else 'تغيرت الحصة من مستخدم آخر؛ حدّث الجدول قبل الحفظ.' end
+	);
+end;
+$$;
+
+create or replace function public.ensure_class_subjects_for_timetable(p_class_id uuid)
+returns integer
+language plpgsql
+security definer
+set search_path = pg_catalog, public, app, extensions, pg_temp
+as $$
+declare
+	v_class public.classes%rowtype;
+	v_affected integer;
+begin
+	perform app.require_perm('timetable.manage');
+	select c.* into v_class from public.classes c
+	where c.id = p_class_id and c.school_id = app.current_school_id()
+		and c.is_active and not c.is_archived;
+	if not found then
+		raise exception 'الفصل غير موجود أو لا تملك صلاحية الوصول إليه.' using errcode='P0001';
+	end if;
+	insert into public.class_subjects(
+		class_id, academic_year_id, grade_id, subject_id, grade_subject_id,
+		weekly_periods, is_active
+	)
+	select v_class.id, gs.academic_year_id, gs.grade_id, gs.subject_id,
+				 gs.id, gs.weekly_periods, true
+	from public.grade_subjects gs
+	join public.subjects s on s.id = gs.subject_id and s.school_id = v_class.school_id
+	where gs.academic_year_id = v_class.academic_year_id
+		and gs.grade_id = v_class.grade_id and gs.is_active
+		and s.is_active and not s.is_archived
+	on conflict (class_id, subject_id) do update
+		set academic_year_id = excluded.academic_year_id,
+				grade_id = excluded.grade_id,
+				grade_subject_id = excluded.grade_subject_id,
+				weekly_periods = excluded.weekly_periods,
+				is_active = true;
+	get diagnostics v_affected = row_count;
+	return v_affected;
+end;
+$$;
+
+create or replace function public.ensure_class_subjects_for_employee_assignments(
+	p_academic_year_id uuid
+)
+returns integer
+language plpgsql
+security definer
+set search_path = pg_catalog, public, app, extensions, pg_temp
+as $$
+declare
+	v_school_id uuid := app.current_school_id();
+	v_inserted integer;
+begin
+	if auth.uid() is null or not (
+		app.has_any_perm('employees.view', 'employees.edit', 'timetable.manage')
+	) then
+		raise exception 'لا تملك صلاحية تهيئة إسنادات المعلمين.' using errcode = '42501';
+	end if;
+	if not exists (
+		select 1 from public.academic_years y
+		where y.id = p_academic_year_id and y.school_id = v_school_id
+	) then
+		raise exception 'السنة الدراسية غير موجودة في المدرسة الحالية.' using errcode = '42501';
+	end if;
+	insert into public.class_subjects (
+		class_id, academic_year_id, grade_id, subject_id, grade_subject_id,
+		weekly_periods, is_active
+	)
+	select c.id, gs.academic_year_id, gs.grade_id, gs.subject_id, gs.id,
+				 gs.weekly_periods, true
+	from public.classes c
+	join public.grade_subjects gs
+		on gs.academic_year_id = c.academic_year_id and gs.grade_id = c.grade_id
+	join public.subjects s on s.id = gs.subject_id and s.school_id = c.school_id
+	where c.school_id = v_school_id
+		and c.academic_year_id = p_academic_year_id
+		and c.is_active and not c.is_archived
+		and gs.is_active and s.is_active and not s.is_archived
+	on conflict (class_id, subject_id) do update
+		set academic_year_id = excluded.academic_year_id,
+				grade_id = excluded.grade_id,
+				grade_subject_id = excluded.grade_subject_id,
+				weekly_periods = excluded.weekly_periods,
+				is_active = true;
+	get diagnostics v_inserted = row_count;
+	return v_inserted;
+end;
+$$;
+
+create or replace function public.list_employee_assignment_options(
+	p_academic_year_id uuid,
+	p_employee_id uuid default null
+)
+returns table (
+	class_subject_id uuid,
+	class_id uuid,
+	grade_id uuid,
+	stage_id uuid,
+	stage_name text,
+	grade_name text,
+	grade_level smallint,
+	section_code text,
+	section_name text,
+	class_name text,
+	subject_id uuid,
+	subject_name text,
+	subject_sort_order integer,
+	weekly_periods smallint,
+	assigned_employee_id uuid,
+	is_selected boolean
+)
+language plpgsql
+security definer
+set search_path = pg_catalog, public, app, extensions, pg_temp
+as $$
+declare
+	v_school_id uuid := app.current_school_id();
+begin
+	if auth.uid() is null or not (
+		app.has_any_perm('employees.view', 'employees.edit', 'timetable.manage')
+	) then
+		raise exception 'لا تملك صلاحية عرض إسنادات المعلمين.' using errcode = '42501';
+	end if;
+	if not exists (
+		select 1 from public.academic_years y
+		where y.id = p_academic_year_id and y.school_id = v_school_id
+	) then
+		raise exception 'السنة الدراسية غير موجودة في المدرسة الحالية.' using errcode = '42501';
+	end if;
+	if p_employee_id is not null and not exists (
+		select 1 from public.employees e
+		where e.id = p_employee_id and e.school_id = v_school_id
+	) then
+		raise exception 'الموظف غير موجود في المدرسة الحالية.' using errcode = '42501';
+	end if;
+	perform public.ensure_class_subjects_for_employee_assignments(p_academic_year_id);
+	return query
+	select cs.id, c.id, g.id, st.id, st.name_ar, g.name_ar, g.level_number,
+				 c.section_code, c.section_name, c.name_ar, s.id, s.name_ar, s.sort_order,
+				 cs.weekly_periods, coalesce(ea.employee_id, cs.employee_id),
+				 p_employee_id is not null
+					 and coalesce(ea.employee_id, cs.employee_id) = p_employee_id
+	from public.class_subjects cs
+	join public.classes c on c.id = cs.class_id
+	join public.school_grades g on g.id = cs.grade_id
+	join public.academic_stages st on st.id = g.stage_id
+	join public.subjects s on s.id = cs.subject_id
+	left join lateral (
+		select a.employee_id
+		from public.employee_assignments a
+		where a.class_subject_id = cs.id
+			and a.academic_year_id = p_academic_year_id
+			and a.is_active
+		order by (a.employee_id = p_employee_id) desc, a.created_at desc
+		limit 1
+	) ea on true
+	where c.school_id = v_school_id
+		and c.academic_year_id = p_academic_year_id
+		and cs.academic_year_id = p_academic_year_id
+		and c.is_active and not c.is_archived
+		and cs.is_active and s.is_active and not s.is_archived
+	order by g.level_number, c.section_code nulls last, c.name_ar, s.sort_order, s.name_ar;
+end;
+$$;
+
+create or replace function public.sync_employee_assignments(
+	p_employee_id uuid,
+	p_academic_year_id uuid,
+	p_class_subject_ids uuid[] default '{}'::uuid[]
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public, app, extensions, pg_temp
+as $$
+declare
+	v_school_id uuid := app.current_school_id();
+	v_ids uuid[] := coalesce(p_class_subject_ids, '{}'::uuid[]);
+	v_disabled integer := 0;
+	v_employee public.employees%rowtype;
+begin
+	if auth.uid() is null or not app.has_perm('employees.edit') then
+		raise exception 'لا تملك صلاحية تعديل إسنادات المعلمين.' using errcode = '42501';
+	end if;
+	if cardinality(v_ids) > 500 then
+		raise exception 'تجاوز عدد الإسنادات الحد المسموح.' using errcode = '22023';
+	end if;
+	select * into v_employee from public.employees e
+	where e.id = p_employee_id and e.school_id = v_school_id
+	for update;
+	if not found then
+		raise exception 'الموظف غير موجود في المدرسة الحالية.' using errcode = '42501';
+	end if;
+	if not exists (
+		select 1 from public.academic_years y
+		where y.id = p_academic_year_id and y.school_id = v_school_id
+	) then
+		raise exception 'السنة الدراسية غير موجودة في المدرسة الحالية.' using errcode = '42501';
+	end if;
+	if cardinality(v_ids) > 0 and not v_employee.is_teacher then
+		raise exception 'فعّل صفة المعلم قبل حفظ إسنادات التدريس.' using errcode = '22023';
+	end if;
+	perform public.ensure_class_subjects_for_employee_assignments(p_academic_year_id);
+	if exists (
+		select 1 from unnest(v_ids) selected(id)
+		left join public.class_subjects cs
+			on cs.id = selected.id and cs.academic_year_id = p_academic_year_id and cs.is_active
+		left join public.classes c
+			on c.id = cs.class_id and c.school_id = v_school_id
+		 and c.academic_year_id = p_academic_year_id
+		where cs.id is null or c.id is null
+	) then
+		raise exception 'يتضمن التحديد إسنادًا لا ينتمي إلى السنة أو المدرسة الحالية.' using errcode = '42501';
+	end if;
+	if exists (
+		select 1 from public.class_subjects cs
+		where cs.id = any(v_ids) and cs.employee_id is not null
+			and cs.employee_id <> p_employee_id
+	) or exists (
+		select 1 from public.employee_assignments a
+		where a.class_subject_id = any(v_ids)
+			and a.academic_year_id = p_academic_year_id
+			and a.is_active and a.employee_id <> p_employee_id
+	) then
+		raise exception 'أحد الإسنادات محدد لمعلم آخر. أزل الإسناد السابق أولًا.' using errcode = '23514';
+	end if;
+	update public.employee_assignments a
+	set is_active = false, version = coalesce(a.version, 1) + 1, updated_at = now()
+	where a.employee_id = p_employee_id and a.academic_year_id = p_academic_year_id
+		and a.is_active and not (a.class_subject_id = any(v_ids));
+	get diagnostics v_disabled = row_count;
+	update public.class_subjects cs
+	set employee_id = null
+	where cs.academic_year_id = p_academic_year_id
+		and cs.employee_id = p_employee_id and not (cs.id = any(v_ids));
+	insert into public.employee_assignments(
+		employee_id, academic_year_id, class_subject_id, is_active
+	)
+	select p_employee_id, p_academic_year_id, selected.id, true
+	from (select distinct id from unnest(v_ids) id) selected
+	on conflict (employee_id, class_subject_id) do update
+		set academic_year_id = excluded.academic_year_id,
+				is_active = true,
+				version = coalesce(public.employee_assignments.version, 1) + 1,
+				updated_at = now();
+	update public.class_subjects cs
+	set employee_id = p_employee_id
+	where cs.id = any(v_ids) and cs.academic_year_id = p_academic_year_id;
+	return jsonb_build_object(
+		'saved', true, 'assigned_count', cardinality(v_ids),
+		'disabled_count', v_disabled, 'academic_year_id', p_academic_year_id
+	);
+end;
+$$;
+
+create or replace function public.list_social_cases(
+	p_status app.social_case_status default null,
+	p_query text default null
+)
+returns table(
+	id uuid, student_id uuid, student_name text, category text,
+	priority app.social_case_priority, status app.social_case_status,
+	summary text, opened_date date, assigned_to uuid, version integer
+)
+language plpgsql
+security definer
+set search_path = public, app, pg_temp
+as $$
+	declare
+		v_school_id uuid := app.current_school_id();
+		v_actor_label text;
+	begin
+		if not app.has_any_perm('social.view', 'social.manage') then
+			return;
+		end if;
+		select coalesce(nullif(btrim(p.full_name), ''), p.username)
+		into v_actor_label
+		from public.profiles p
+		where p.id = auth.uid();
+		insert into public.audit_logs(
+			user_id, actor_id, actor_label, action, entity_type, entity_id,
+			school_id, description, metadata
+		)
+		select auth.uid(), auth.uid(), v_actor_label, 'SENSITIVE_ACCESS',
+			'social_case', c.id::text, v_school_id,
+			'تم عرض ملخص حالة اجتماعية', jsonb_build_object('school_id', v_school_id)
+		from public.social_cases c
+		join public.students s on s.id = c.student_id
+		where coalesce(c.school_id, s.school_id) = v_school_id
+			and s.school_id = v_school_id
+			and (p_status is null or c.status = p_status)
+			and (
+				p_query is null or btrim(p_query) = ''
+				or s.full_name ilike '%' || p_query || '%'
+				or coalesce(c.summary, '') ilike '%' || p_query || '%'
+			);
+		return query
+	select c.id, c.student_id, s.full_name,
+		coalesce(c.category, c.case_type), c.priority, c.status, c.summary,
+		c.opened_date, c.assigned_to, c.version
+	from public.social_cases c
+	join public.students s on s.id = c.student_id
+	where coalesce(c.school_id, s.school_id) = v_school_id
+		and s.school_id = v_school_id
+		and (p_status is null or c.status = p_status)
+		and (
+			p_query is null or btrim(p_query) = ''
+			or s.full_name ilike '%' || p_query || '%'
+			or coalesce(c.summary, '') ilike '%' || p_query || '%'
+		)
+	order by c.opened_date desc, c.created_at desc, c.id desc;
+end;
+$$;
+
+-- Payroll generation captures each employee's configured salary as a snapshot.
+create or replace function public.generate_payroll(
+	p_period_id uuid,
+	p_idempotency_key text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, app, pg_temp
+as $$
+declare
+	v_period public.payroll_periods%rowtype;
+	v_inserted integer := 0;
+begin
+	perform app.require_perm('payroll.manage');
+	select * into v_period
+	from public.payroll_periods
+	where id = p_period_id and school_id = app.current_school_id()
+	for update;
+	if not found or v_period.status <> 'draft' then
+		raise exception 'فترة الرواتب غير صالحة أو ليست مسودة';
+	end if;
+	insert into public.payroll_entries(payroll_period_id, employee_id, basic_salary)
+	select v_period.id, e.id, coalesce(e.basic_salary, 0)
+	from public.employees e
+	where e.school_id = app.current_school_id()
+		and not coalesce(e.is_archived, false)
+	on conflict (payroll_period_id, employee_id) do nothing;
+	get diagnostics v_inserted = row_count;
+	update public.payroll_periods
+	set status = 'calculated'
+	where id = v_period.id and status = 'draft';
+	return jsonb_build_object(
+		'entries', v_inserted, 'period_id', v_period.id, 'status', 'calculated'
 	);
 end;
 $$;

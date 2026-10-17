@@ -9,6 +9,67 @@ begin
 end;
 $$;
 
+create or replace function app.guardian_app_login_status_write_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, auth, app, pg_temp
+as $$
+begin
+	if auth.uid() is null then
+		return new;
+	end if;
+	if tg_op = 'INSERT' then
+		if new.guardian_app_login_status <> 'not_created'
+			or new.guardian_app_login_enabled then
+			raise exception 'إدارة الدخول متاحة لحسابات الطلاب فقط.'
+				using errcode = '42501';
+		end if;
+	elsif new.guardian_app_login_status is distinct from old.guardian_app_login_status
+		or new.guardian_app_login_enabled is distinct from old.guardian_app_login_enabled then
+		raise exception 'إدارة الدخول متاحة لحسابات الطلاب فقط.'
+			using errcode = '42501';
+	end if;
+	return new;
+end;
+$$;
+
+create or replace function app.touch_school_location_version()
+returns trigger
+language plpgsql
+set search_path=pg_catalog,public,app,pg_temp
+as $$
+begin
+	new.updated_at := now();
+	new.version := coalesce(old.version, 0) + 1;
+	return new;
+end;
+$$;
+
+create or replace function app.guard_timetable_entry_year()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, public, app, pg_temp
+as $$
+begin
+	if not exists (
+		select 1 from public.classes c
+		where c.id = new.class_id and c.academic_year_id = new.academic_year_id
+	) then
+		raise exception 'الفصل المحدد لا يتبع السنة الدراسية المختارة.'
+			using errcode = '23503';
+	end if;
+	if not exists (
+		select 1 from public.timetable_periods p
+		where p.id = new.period_id and p.academic_year_id = new.academic_year_id
+	) then
+		raise exception 'الفترة الزمنية لا تتبع السنة الدراسية المختارة.'
+			using errcode = '23503';
+	end if;
+	return new;
+end;
+$$;
+
 create trigger schools_updated_at before update on schools for each row execute function public.set_updated_at();
 create trigger settings_updated_at before update on school_settings for each row execute function public.set_updated_at();
 create trigger profiles_updated_at before update on profiles for each row execute function public.set_updated_at();
@@ -114,9 +175,6 @@ before insert or update of school_id, name_ar on public.academic_years
 for each row
 execute function public.guard_academic_year_unique_name();
 
-create unique index if not exists uq_academic_year_name_per_school
-on public.academic_years (school_id, lower(btrim(name_ar)))
-where name_ar is not null and btrim(name_ar) <> '';
 create trigger leave_overlap before insert or update on leave_requests for each row execute function app.tg_leave_overlap();
 create trigger payment_immutable before update on payments for each row execute function app.tg_payment_immutable();
 create trigger students_no_delete before delete on students for each row execute function app.tg_block_delete();
@@ -178,3 +236,20 @@ drop trigger if exists guard_student_profile_login_identifier on public.students
 create trigger guard_student_profile_login_identifier
 before insert or update of student_number on public.students
 for each row execute function app.guard_student_login_identifier_collision();
+
+drop trigger if exists guardian_app_login_status_write_guard on public.guardians;
+create trigger guardian_app_login_status_write_guard
+before insert or update of guardian_app_login_status, guardian_app_login_enabled
+on public.guardians
+for each row execute function app.guardian_app_login_status_write_guard();
+
+drop trigger if exists school_locations_updated_at on public.school_locations;
+create trigger school_locations_updated_at
+before update on public.school_locations
+for each row execute function app.touch_school_location_version();
+
+drop trigger if exists timetable_entries_year_guard on public.timetable_entries;
+create trigger timetable_entries_year_guard
+before insert or update of class_id, period_id, academic_year_id
+on public.timetable_entries
+for each row execute function app.guard_timetable_entry_year();

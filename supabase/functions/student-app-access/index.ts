@@ -1,28 +1,26 @@
 // @ts-nocheck
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const MAX_TARGETS = 50;
 const allowedDevelopmentOrigins = [
-  "http://localhost:8000",
-  "http://127.0.0.1:8000",
-  "http://localhost:8080",
-  "http://127.0.0.1:8080",
-  "http://localhost:8756",
-  "http://127.0.0.1:8756",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
+  "http://localhost:3030",
+  "http://127.0.0.1:3030",
+  "http://localhost:3045",
+  "http://127.0.0.1:3045",
+  "http://localhost:3090",
+  "http://127.0.0.1:3090",
+  "http://localhost:8080",
+  "http://127.0.0.1:8080",
 ];
-const MAX_TARGETS = 50;
-const PASSWORD_ALPHABET =
-  "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
 
 function allowedOrigins() {
   const configured = (Deno.env.get("CORS_ALLOWED_ORIGINS") || "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
-  return new Set(configured.length ? configured : allowedDevelopmentOrigins);
+  return new Set([...configured, ...allowedDevelopmentOrigins]);
 }
 
 function corsHeaders(request: Request) {
@@ -34,7 +32,11 @@ function corsHeaders(request: Request) {
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
-  if (origin && allowedOrigins().has(origin)) {
+  const configuredOrigins = allowedOrigins();
+  // CORS is not an authorization boundary: requests still require a valid
+  // bearer token and server-checked permissions. Configured production
+  // origins are combined with the explicit local development origins above.
+  if (origin && configuredOrigins.has(origin)) {
     headers["Access-Control-Allow-Origin"] = origin;
   }
   return headers;
@@ -130,10 +132,6 @@ async function handleRequest(request: Request) {
     isAdmin || actor.permissions.some((permission) =>
       ["students.manage", "students.edit"].includes(permission)
     );
-  const canManageGuardians =
-    isAdmin || actor.permissions.some((permission) =>
-      ["guardians.manage", "students.edit"].includes(permission)
-    );
   const action = String(payload.action || "");
 
   if (action === "record-export") {
@@ -199,6 +197,9 @@ async function handleRequest(request: Request) {
     return json({ error: "إجراء إدارة الوصول غير معروف." }, 400, request);
   }
   const kind = String(payload.kind || "");
+  if (kind !== "student") {
+    return json({ error: "إدارة الدخول متاحة لحسابات الطلاب فقط." }, 400, request);
+  }
   const status = String(payload.status || "");
   const rawIds = Array.isArray(payload.ids) ? payload.ids : [];
   const ids = [...new Set(rawIds.filter((id) => typeof id === "string"))];
@@ -208,20 +209,11 @@ async function handleRequest(request: Request) {
   if (!["active", "reset_required", "disabled"].includes(status)) {
     return json({ error: "حالة الوصول المحددة غير صالحة." }, 400, request);
   }
-  if (kind === "student" && !canManageStudents) {
+  if (!canManageStudents) {
     return json({ error: "ليس لديك صلاحية إدارة دخول الطلاب." }, 403, request);
   }
-  // A guardian uses the selected child's account. Both student-access and
-  // guardian-access permissions are required because the operation affects
-  // the student's login and every guardian sharing it.
-  if (kind === "guardian" && (!canManageStudents || !canManageGuardians)) {
-    return json({ error: "تتطلب إدارة دخول ولي الأمر صلاحية الطلاب وأولياء الأمور." }, 403, request);
-  }
-  if (!["student", "guardian"].includes(kind)) {
-    return json({ error: "نوع الحساب المحدد غير صالح." }, 400, request);
-  }
 
-  const resolved = await resolveTargets(admin, kind, ids, actor.schoolId);
+  const resolved = await resolveTargets(admin, ids, actor.schoolId);
   if (resolved.error) {
     if (typeof resolved.error !== "string") {
       console.error("student app access target lookup failed");
@@ -249,148 +241,40 @@ async function handleRequest(request: Request) {
     if (result.failure) failures.push(result.failure);
   }
 
-  const guardianStatusFailures: Record<string, unknown>[] = [];
-  const completedGuardianIds: string[] = [];
-  if (kind === "guardian") {
-    const targetState = new Map(records.map((record) => [record.student_id, record.success]));
-    for (const guardian of resolved.guardians) {
-      const linkedIds = resolved.guardianStudentIds.get(guardian.id) || [];
-      if (!linkedIds.length || linkedIds.some((studentId) => targetState.get(studentId) !== true)) {
-        continue;
-      }
-      const { data, error } = await caller.rpc("update_guardian_app_login_status", {
-        p_guardian_id: guardian.id,
-        p_status: status,
-        p_reason: "إدارة الحساب المشترك للطالب وولي الأمر",
-      });
-      if (error || data?.status !== status) {
-        guardianStatusFailures.push({
-          label: guardian.full_name || "ولي أمر محدد",
-          error: "تعذر تحديث حالة ولي الأمر المسجلة.",
-        });
-      } else {
-        completedGuardianIds.push(guardian.id);
-      }
-    }
-  }
-
   return json({
     records,
     credentials,
     failures,
-    guardian_status_failures: guardianStatusFailures,
-    completed_guardian_ids: completedGuardianIds,
   }, 200, request);
 }
 
 async function resolveTargets(
   admin: ReturnType<typeof createClient>,
-  kind: string,
   ids: string[],
   schoolId: string,
 ) {
   const failures: Record<string, unknown>[] = [];
-  const targetsById = new Map<string, Record<string, unknown>>();
-  const guardians: Record<string, unknown>[] = [];
-  const guardianStudentIds = new Map<string, string[]>();
-
-  if (kind === "student") {
-    const { data, error } = await admin
-      .from("students")
-      .select("id,school_id,student_number,full_name,educational_status,is_archived,student_app_login_status")
-      .eq("school_id", schoolId)
-      .in("id", ids);
-    if (error) return { error };
-    for (const student of data || []) {
-      if (student.educational_status === "withdrawn" || student.is_archived) {
-        failures.push({ label: student.full_name || "طالب محدد", error: "الطالب منسحب أو مؤرشف ولا يمكن إصدار دخول له." });
-        continue;
-      }
-      targetsById.set(student.id, { student, guardianNames: [] });
+  const { data, error } = await admin
+    .from("students")
+    .select("id,school_id,student_number,full_name,educational_status,is_archived,student_app_login_status")
+    .eq("school_id", schoolId)
+    .in("id", ids);
+  if (error) return { error };
+  const targets = [];
+  const found = new Set((data || []).map((student) => student.id));
+  for (const student of data || []) {
+    if (student.educational_status === "withdrawn" || student.is_archived) {
+      failures.push({ label: student.full_name || "طالب محدد", error: "الطالب منسحب أو مؤرشف ولا يمكن إصدار دخول له." });
+      continue;
     }
-    const found = new Set((data || []).map((student) => student.id));
-    for (const id of ids) if (!found.has(id)) failures.push({ label: "طالب محدد", error: "الطالب غير موجود في المدرسة الحالية." });
-  } else {
-    const { data: guardianRows, error: guardianError } = await admin
-      .from("guardians")
-      .select("id,school_id,full_name")
-      .eq("school_id", schoolId)
-      .in("id", ids);
-    if (guardianError) return { error: guardianError };
-    guardians.push(...(guardianRows || []));
-    const foundGuardians = new Set((guardianRows || []).map((guardian) => guardian.id));
-    for (const id of ids) {
-      if (!foundGuardians.has(id)) failures.push({ label: "ولي أمر محدد", error: "ولي الأمر غير موجود في المدرسة الحالية." });
-      guardianStudentIds.set(id, []);
-    }
-    if (foundGuardians.size) {
-      const { data: links, error: linkError } = await admin
-        .from("student_guardians")
-        .select("guardian_id,student_id")
-        .in("guardian_id", [...foundGuardians]);
-      if (linkError) return { error: linkError };
-      const studentIds = [...new Set((links || []).map((link) => link.student_id))];
-      const { data: studentRows, error: studentError } = await admin
-        .from("students")
-        .select("id,school_id,student_number,full_name,educational_status,is_archived,student_app_login_status")
-        .eq("school_id", schoolId)
-        .in("id", studentIds.length ? studentIds : ["00000000-0000-0000-0000-000000000000"]);
-      if (studentError) return { error: studentError };
-      const studentsById = new Map((studentRows || []).map((student) => [student.id, student]));
-      const guardiansById = new Map(guardians.map((guardian) => [guardian.id, guardian]));
-      for (const link of links || []) {
-        const student = studentsById.get(link.student_id);
-        const guardian = guardiansById.get(link.guardian_id);
-        guardianStudentIds.get(link.guardian_id)?.push(link.student_id);
-        if (!student || student.educational_status === "withdrawn" || student.is_archived) continue;
-        const target = targetsById.get(student.id) || { student, guardianNames: [] };
-        if (guardian?.full_name && !target.guardianNames.includes(guardian.full_name)) {
-          target.guardianNames.push(guardian.full_name);
-        }
-        targetsById.set(student.id, target);
-      }
-    }
-    for (const guardian of guardians) {
-      const linked = guardianStudentIds.get(guardian.id) || [];
-      const available = linked.filter((studentId) => targetsById.has(studentId));
-      if (!available.length) failures.push({ label: guardian.full_name || "ولي أمر محدد", error: "لا يوجد طالب نشط مرتبط بولي الأمر." });
-    }
-    const targetIds = [...targetsById.keys()];
-    if (targetIds.length) {
-      const { data: allLinks, error: allLinksError } = await admin
-        .from("student_guardians")
-        .select("student_id,guardian_id")
-        .in("student_id", targetIds);
-      if (allLinksError) return { error: allLinksError };
-      const allGuardianIds = [...new Set((allLinks || []).map((link) => link.guardian_id))];
-      if (allGuardianIds.length) {
-        const { data: allGuardians, error: allGuardiansError } = await admin
-          .from("guardians")
-          .select("id,full_name")
-          .eq("school_id", schoolId)
-          .in("id", allGuardianIds);
-        if (allGuardiansError) return { error: allGuardiansError };
-        const guardianNames = new Map((allGuardians || []).map((guardian) => [guardian.id, guardian.full_name]));
-        for (const link of allLinks || []) {
-          const name = guardianNames.get(link.guardian_id);
-          const target = targetsById.get(link.student_id);
-          if (target && name && !target.guardianNames.includes(name)) {
-            target.guardianNames.push(name);
-          }
-        }
-      }
-    }
-    if (targetsById.size > MAX_TARGETS) {
-      return { error: `تتجاوز الحسابات المرتبطة الحد الآمن (${MAX_TARGETS}). قلّل عدد أولياء الأمور المحددين.` };
+    targets.push({ student });
+  }
+  for (const id of ids) {
+    if (!found.has(id)) {
+      failures.push({ label: "طالب محدد", error: "الطالب غير موجود في المدرسة الحالية." });
     }
   }
-
-  return {
-    targets: [...targetsById.values()],
-    failures,
-    guardians,
-    guardianStudentIds,
-  };
+  return { targets, failures };
 }
 
 async function updateStudentAccount({ admin, caller, actor, target, status }) {
@@ -421,11 +305,12 @@ async function updateStudentAccount({ admin, caller, actor, target, status }) {
     if (!statusResult.ok) return failedRecord(student, label, statusResult.message);
     const audited = await auditAccountChange(admin, actor, student.id, "disabled");
     if (!audited) return failedRecord(student, label, "تم تعطيل الوصول لكن تعذر تسجيل التدقيق؛ راجع سجل الطالب قبل المتابعة.");
-    return { record: { ...recordFor(student, target, true), status: "disabled", outcome: "disabled" } };
+    return { record: { ...recordFor(student, true), status: "disabled", outcome: "disabled" } };
   }
 
   const issuePassword =
     status === "reset_required" ||
+    account?.is_enabled === false ||
     !account?.auth_user_id ||
     !account?.credential_issued_at ||
     account?.credential_delivery_pending;
@@ -557,7 +442,7 @@ async function updateStudentAccount({ admin, caller, actor, target, status }) {
   }
 
   const record = {
-    ...recordFor(student, target, true),
+    ...recordFor(student, true),
     status: nextStatus,
     outcome,
     credential_issued_at: password ? new Date().toISOString() : null,
@@ -565,10 +450,8 @@ async function updateStudentAccount({ admin, caller, actor, target, status }) {
   const credential = password
     ? {
         student_id: student.id,
-        account_type: "حساب طالب مشترك مع ولي الأمر",
         student_name: student.full_name || "اسم غير متوفر",
         student_number: student.student_number || "غير متوفر",
-        guardian_names: (target.guardianNames || []).join("، ") || "ولي الأمر المرتبط",
         password,
         operation: outcome === "reset" ? "إعادة تعيين" : "إنشاء حساب",
         status: "نجاح",
@@ -582,7 +465,7 @@ async function setStudentStatus(caller, studentId: string, status: string) {
   const { data, error } = await caller.rpc("update_student_app_login_status", {
     p_student_id: studentId,
     p_status: status,
-    p_reason: "إدارة الحساب المشترك للطالب وولي الأمر",
+    p_reason: "إدارة حساب دخول الطالب",
   });
   if (error || data?.student_id !== studentId || data?.status !== status) {
     return { ok: false, message: "لم يؤكد الخادم تحديث حالة الطالب." };
@@ -590,12 +473,11 @@ async function setStudentStatus(caller, studentId: string, status: string) {
   return { ok: true };
 }
 
-function recordFor(student, target, success) {
+function recordFor(student, success) {
   return {
     student_id: student.id,
     student_name: student.full_name || "اسم غير متوفر",
     student_number: student.student_number || "غير متوفر",
-    guardian_names: (target.guardianNames || []).join("، "),
     success,
   };
 }
@@ -614,10 +496,17 @@ function failedRecord(student, label: string, message: string) {
 }
 
 function generateTemporaryPassword() {
-  const bytes = crypto.getRandomValues(new Uint8Array(24));
-  let password = "Aa7!";
-  for (const byte of bytes) password += PASSWORD_ALPHABET[byte % PASSWORD_ALPHABET.length];
-  return password;
+  const digits: string[] = [];
+  const bytes = new Uint8Array(16);
+  while (digits.length < 6) {
+    crypto.getRandomValues(bytes);
+    for (const byte of bytes) {
+      // Reject 250–255 so each decimal digit has the same probability.
+      if (byte < 250) digits.push(String(byte % 10));
+      if (digits.length === 6) break;
+    }
+  }
+  return digits.join("");
 }
 
 function syntheticLoginEmail(studentId: string) {
@@ -639,7 +528,7 @@ async function hasProfileUsernameCollision(admin, studentNumber: string) {
 async function auditAccountChange(admin, actor, studentId: string, operation: string) {
   const action = operation === "disabled"
     ? "student_app_account.disabled"
-    : operation === "reset"
+      : operation === "reset"
       ? "student_app_account.password_reset"
       : operation === "created"
         ? "student_app_account.created"
@@ -653,12 +542,12 @@ async function auditAccountChange(admin, actor, studentId: string, operation: st
     entity_id: studentId,
     school_id: actor.schoolId,
     description: operation === "disabled"
-      ? "تم تعطيل حساب التطبيق المشترك للطالب وولي أمره."
+      ? "تم تعطيل حساب دخول الطالب."
       : operation === "reset"
-        ? "أُعيد تعيين كلمة مرور حساب التطبيق المشترك."
+        ? "أُعيد تعيين رمز دخول الطالب."
         : operation === "created"
-          ? "أُنشئ حساب التطبيق المشترك للطالب وولي أمره."
-          : "تم تفعيل حساب التطبيق المشترك للطالب وولي أمره.",
+          ? "أُنشئ حساب دخول الطالب."
+          : "تم تفعيل حساب دخول الطالب.",
     metadata: { module: "app-access", operation },
   });
   if (error) {

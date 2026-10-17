@@ -386,10 +386,84 @@ CREATE INDEX IF NOT EXISTS idx_student_fees_fee_type
   ON public.student_fees(fee_type_id)
   WHERE fee_type_id IS NOT NULL;
 
-create table timetable_periods(id uuid primary key default gen_random_uuid(), school_id uuid references schools(id), academic_year_id uuid references academic_years(id), period_number integer not null, name_ar text, start_time time not null, end_time time not null, is_active boolean default true, is_break boolean default false, unique(school_id,period_number), check(end_time>start_time));
+create table timetable_periods(id uuid primary key default gen_random_uuid(), school_id uuid references schools(id), academic_year_id uuid references academic_years(id), period_number integer not null, name_ar text, start_time time not null, end_time time not null, is_active boolean default true, is_break boolean default false, constraint uq_timetable_periods_school_year_period unique(school_id,academic_year_id,period_number), check(end_time>start_time));
 create table week_days(day_number smallint primary key check(day_number between 0 and 6), name_ar text not null, is_school_day boolean default true, sort_order smallint not null);
 create table teacher_availability(id uuid primary key default gen_random_uuid(), employee_id uuid references employees(id), academic_year_id uuid references academic_years(id), day_number smallint references week_days(day_number), period_id uuid references timetable_periods(id), is_available boolean default true, reason text, unique(employee_id,academic_year_id,day_number,period_id));
 create table timetable_entries(id uuid primary key default gen_random_uuid(), academic_year_id uuid references academic_years(id), day_number smallint, day_of_week text, period_id uuid references timetable_periods(id), class_id uuid references classes(id), class_subject_id uuid references class_subjects(id), subject_id uuid references subjects(id), employee_id uuid references employees(id), room text, room_name text, is_active boolean default true, version integer default 1, created_at timestamptz default now(), created_by uuid references profiles(id));
+
+-- Physical school locations and timetable cross-year integrity.
+create table if not exists public.school_locations (
+  id uuid primary key default gen_random_uuid(),
+  school_id uuid not null references public.schools(id) on delete restrict,
+  code text,
+  name_ar text not null,
+  location_type text not null default 'classroom'
+    check (location_type in ('classroom', 'hall', 'library', 'other')),
+  capacity integer check (capacity is null or capacity >= 0),
+  notes text,
+  is_active boolean not null default true,
+  version integer not null default 1,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (school_id, name_ar),
+  unique (school_id, code)
+);
+alter table public.timetable_entries
+  add column if not exists location_id uuid
+  references public.school_locations(id) on delete set null;
+create index if not exists idx_timetable_entries_location
+  on public.timetable_entries(location_id)
+  where location_id is not null;
+create index if not exists idx_class_subjects_year_grade
+  on public.class_subjects(academic_year_id, grade_id, class_id)
+  where is_active;
+
+-- Timetable period numbers are scoped to a school and academic year.
+alter table public.timetable_periods
+  drop constraint if exists timetable_periods_school_id_period_number_key;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.timetable_periods'::regclass
+      and conname = 'uq_timetable_periods_school_year_period'
+  ) then
+    alter table public.timetable_periods
+      add constraint uq_timetable_periods_school_year_period
+      unique (school_id, academic_year_id, period_number);
+  end if;
+end;
+$$;
+create unique index if not exists uq_timetable_periods_id_year
+  on public.timetable_periods(id, academic_year_id);
+create unique index if not exists uq_classes_id_year
+  on public.classes(id, academic_year_id);
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.timetable_entries'::regclass
+      and conname = 'fk_timetable_entries_class_year'
+  ) then
+    alter table public.timetable_entries
+      add constraint fk_timetable_entries_class_year
+      foreign key (class_id, academic_year_id)
+      references public.classes(id, academic_year_id)
+      not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.timetable_entries'::regclass
+      and conname = 'fk_timetable_entries_period_year'
+  ) then
+    alter table public.timetable_entries
+      add constraint fk_timetable_entries_period_year
+      foreign key (period_id, academic_year_id)
+      references public.timetable_periods(id, academic_year_id)
+      not valid;
+  end if;
+end;
+$$;
 
 create table social_case_categories(id uuid primary key default gen_random_uuid(), code text unique, name_ar text not null, is_active boolean default true);
 create table social_cases(
@@ -539,6 +613,9 @@ create index idx_grade_records_exam on grade_records(exam_id);
 create index idx_notifications_user on notifications(user_id,is_read);
 create unique index uq_current_year on academic_years(is_current) where is_current;
 create unique index uq_primary_guardian on student_guardians(student_id) where is_primary or is_primary_contact;
+create unique index if not exists uq_academic_year_name_per_school
+on public.academic_years (school_id, lower(btrim(name_ar)))
+where name_ar is not null and btrim(name_ar) <> '';
 
 alter table school_settings enable row level security;
 

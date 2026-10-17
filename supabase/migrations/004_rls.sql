@@ -1237,13 +1237,6 @@ drop policy if exists rls_delete_academic_years on public.academic_years;
 create policy rls_select_academic_years
   on public.academic_years for select to authenticated
   using (school_id = app.current_school_id() and app.is_active_user());
-create policy rls_insert_academic_years
-  on public.academic_years for insert to authenticated
-  with check (school_id = app.current_school_id() and app.has_perm('academic_years.manage'));
-create policy rls_update_academic_years
-  on public.academic_years for update to authenticated
-  using (school_id = app.current_school_id() and app.has_perm('academic_years.manage'))
-  with check (school_id = app.current_school_id() and app.has_perm('academic_years.manage'));
 
 -- Student portal identities use the minimal session RPC, never the full
 -- administrative student row or the private Auth mapping table.
@@ -1264,3 +1257,326 @@ create policy rls_select_students
     )
     and (educational_status <> 'withdrawn' or app.has_perm('students.archive'))
   );
+
+-- Physical locations are scoped to the active school and academic/timetable roles.
+alter table public.school_locations enable row level security;
+drop policy if exists rls_select_school_locations on public.school_locations;
+drop policy if exists rls_insert_school_locations on public.school_locations;
+drop policy if exists rls_update_school_locations on public.school_locations;
+drop policy if exists rls_delete_school_locations on public.school_locations;
+create policy rls_select_school_locations
+  on public.school_locations for select to authenticated
+  using (
+    school_id = app.current_school_id()
+    and app.is_active_user()
+    and app.has_any_perm('academics.structure.manage', 'timetable.view', 'timetable.manage')
+  );
+create policy rls_insert_school_locations
+  on public.school_locations for insert to authenticated
+  with check (
+    school_id = app.current_school_id()
+    and app.has_any_perm('academics.structure.manage', 'timetable.manage')
+  );
+create policy rls_update_school_locations
+  on public.school_locations for update to authenticated
+  using (
+    school_id = app.current_school_id()
+    and app.has_any_perm('academics.structure.manage', 'timetable.manage')
+  )
+  with check (
+    school_id = app.current_school_id()
+    and app.has_any_perm('academics.structure.manage', 'timetable.manage')
+  );
+
+-- class_subjects is a protected curriculum materialization; clients read it
+-- only for their school and relevant timetable/employee/academic workflows.
+drop policy if exists rls_select_class_subjects on public.class_subjects;
+drop policy if exists rls_insert_class_subjects on public.class_subjects;
+drop policy if exists rls_update_class_subjects on public.class_subjects;
+drop policy if exists rls_delete_class_subjects on public.class_subjects;
+create policy rls_select_class_subjects
+  on public.class_subjects for select to authenticated
+  using (
+    exists (
+      select 1 from public.classes c
+      where c.id = class_subjects.class_id
+        and c.school_id = app.current_school_id()
+        and c.academic_year_id = class_subjects.academic_year_id
+        and c.grade_id = class_subjects.grade_id
+    )
+    and app.has_any_perm(
+      'employees.view', 'employees.edit', 'academics.structure.manage',
+      'timetable.view', 'timetable.manage'
+    )
+  );
+
+-- Direct teacher-assignment writes are disabled; the atomic RPC is the write path.
+alter table public.employee_assignments enable row level security;
+drop policy if exists rls_select_employee_assignments on public.employee_assignments;
+drop policy if exists rls_insert_employee_assignments on public.employee_assignments;
+drop policy if exists rls_update_employee_assignments on public.employee_assignments;
+drop policy if exists rls_delete_employee_assignments on public.employee_assignments;
+create policy rls_select_employee_assignments
+  on public.employee_assignments for select to authenticated
+  using (
+    exists (
+      select 1 from public.employees e
+      where e.id = employee_assignments.employee_id
+        and e.school_id = app.current_school_id()
+    )
+    and app.has_any_perm(
+      'employees.view', 'employees.edit', 'attendance.employees.view',
+      'attendance.employees.manage', 'timetable.view', 'timetable.manage'
+    )
+  );
+
+-- Periods and timetable entries are visible only in the current school/year.
+drop policy if exists rls_select_timetable_periods on public.timetable_periods;
+drop policy if exists rls_insert_timetable_periods on public.timetable_periods;
+drop policy if exists rls_update_timetable_periods on public.timetable_periods;
+drop policy if exists rls_delete_timetable_periods on public.timetable_periods;
+create policy rls_select_timetable_periods
+  on public.timetable_periods for select to authenticated
+  using (
+    school_id = app.current_school_id()
+    and app.is_active_user()
+    and app.has_any_perm('timetable.view', 'timetable.manage')
+    and exists (
+      select 1 from public.academic_years y
+      where y.id = timetable_periods.academic_year_id
+        and y.school_id = app.current_school_id()
+    )
+  );
+create policy rls_insert_timetable_periods
+  on public.timetable_periods for insert to authenticated
+  with check (
+    school_id = app.current_school_id()
+    and app.has_perm('timetable.manage')
+    and exists (
+      select 1 from public.academic_years y
+      where y.id = timetable_periods.academic_year_id
+        and y.school_id = app.current_school_id()
+    )
+  );
+create policy rls_update_timetable_periods
+  on public.timetable_periods for update to authenticated
+  using (school_id = app.current_school_id() and app.has_perm('timetable.manage'))
+  with check (
+    school_id = app.current_school_id()
+    and app.has_perm('timetable.manage')
+    and exists (
+      select 1 from public.academic_years y
+      where y.id = timetable_periods.academic_year_id
+        and y.school_id = app.current_school_id()
+    )
+  );
+
+alter table public.timetable_entries enable row level security;
+drop policy if exists rls_select_timetable_entries on public.timetable_entries;
+drop policy if exists rls_insert_timetable_entries on public.timetable_entries;
+drop policy if exists rls_update_timetable_entries on public.timetable_entries;
+drop policy if exists rls_delete_timetable_entries on public.timetable_entries;
+create policy rls_select_timetable_entries
+  on public.timetable_entries for select to authenticated
+  using (
+    app.is_active_user()
+    and app.has_any_perm('timetable.view', 'timetable.manage')
+    and exists (
+      select 1 from public.classes c
+      join public.academic_years y
+        on y.id = c.academic_year_id and y.school_id = c.school_id
+      where c.id = timetable_entries.class_id
+        and c.school_id = app.current_school_id()
+        and c.academic_year_id = timetable_entries.academic_year_id
+    )
+    and exists (
+      select 1 from public.timetable_periods p
+      where p.id = timetable_entries.period_id
+        and p.school_id = app.current_school_id()
+        and p.academic_year_id = timetable_entries.academic_year_id
+    )
+  );
+
+-- Tenant-scoped academic structure write policies and assessment visibility.
+drop policy if exists rls_select_academic_stages on public.academic_stages;
+drop policy if exists rls_insert_academic_stages on public.academic_stages;
+drop policy if exists rls_update_academic_stages on public.academic_stages;
+drop policy if exists rls_delete_academic_stages on public.academic_stages;
+create policy rls_insert_academic_stages
+  on public.academic_stages for insert to authenticated
+  with check (school_id = app.current_school_id() and app.has_perm('academics.structure.manage'));
+create policy rls_select_academic_stages
+  on public.academic_stages for select to authenticated
+  using (school_id = app.current_school_id() and app.is_active_user());
+create policy rls_update_academic_stages
+  on public.academic_stages for update to authenticated
+  using (school_id = app.current_school_id() and app.has_perm('academics.structure.manage'))
+  with check (school_id = app.current_school_id() and app.has_perm('academics.structure.manage'));
+create policy rls_delete_academic_stages
+  on public.academic_stages for delete to authenticated
+  using (school_id = app.current_school_id() and app.is_admin());
+
+drop policy if exists rls_select_school_grades on public.school_grades;
+drop policy if exists rls_insert_school_grades on public.school_grades;
+drop policy if exists rls_update_school_grades on public.school_grades;
+drop policy if exists rls_delete_school_grades on public.school_grades;
+create policy rls_insert_school_grades
+  on public.school_grades for insert to authenticated
+  with check (
+    school_id = app.current_school_id()
+    and app.has_perm('academics.structure.manage')
+    and exists (select 1 from public.academic_stages s
+      where s.id = school_grades.stage_id and s.school_id = app.current_school_id())
+  );
+create policy rls_select_school_grades
+  on public.school_grades for select to authenticated
+  using (school_id = app.current_school_id() and app.is_active_user());
+create policy rls_update_school_grades
+  on public.school_grades for update to authenticated
+  using (school_id = app.current_school_id() and app.has_perm('academics.structure.manage'))
+  with check (
+    school_id = app.current_school_id()
+    and app.has_perm('academics.structure.manage')
+    and exists (select 1 from public.academic_stages s
+      where s.id = school_grades.stage_id and s.school_id = app.current_school_id())
+  );
+create policy rls_delete_school_grades
+  on public.school_grades for delete to authenticated
+  using (school_id = app.current_school_id() and app.is_admin());
+
+drop policy if exists rls_select_subjects on public.subjects;
+drop policy if exists rls_insert_subjects on public.subjects;
+drop policy if exists rls_update_subjects on public.subjects;
+drop policy if exists rls_delete_subjects on public.subjects;
+create policy rls_insert_subjects
+  on public.subjects for insert to authenticated
+  with check (school_id = app.current_school_id() and app.has_perm('academics.structure.manage'));
+create policy rls_select_subjects
+  on public.subjects for select to authenticated
+  using (school_id = app.current_school_id() and app.is_active_user());
+create policy rls_update_subjects
+  on public.subjects for update to authenticated
+  using (school_id = app.current_school_id() and app.has_perm('academics.structure.manage'))
+  with check (school_id = app.current_school_id() and app.has_perm('academics.structure.manage'));
+create policy rls_delete_subjects
+  on public.subjects for delete to authenticated
+  using (school_id = app.current_school_id() and app.is_admin());
+
+drop policy if exists rls_insert_academic_years on public.academic_years;
+drop policy if exists rls_update_academic_years on public.academic_years;
+drop policy if exists rls_delete_academic_years on public.academic_years;
+create policy rls_insert_academic_years
+  on public.academic_years for insert to authenticated
+  with check (school_id = app.current_school_id()
+    and app.has_any_perm('academic_years.manage', 'academics.structure.manage'));
+create policy rls_update_academic_years
+  on public.academic_years for update to authenticated
+  using (school_id = app.current_school_id()
+    and app.has_any_perm('academic_years.manage', 'academics.structure.manage'))
+  with check (school_id = app.current_school_id()
+    and app.has_any_perm('academic_years.manage', 'academics.structure.manage'));
+create policy rls_delete_academic_years
+  on public.academic_years for delete to authenticated
+  using (school_id = app.current_school_id() and app.is_admin());
+
+drop policy if exists rls_select_classes on public.classes;
+drop policy if exists rls_insert_classes on public.classes;
+drop policy if exists rls_update_classes on public.classes;
+drop policy if exists rls_delete_classes on public.classes;
+create policy rls_insert_classes
+  on public.classes for insert to authenticated
+  with check (
+    school_id = app.current_school_id()
+    and app.has_perm('academics.structure.manage')
+    and exists (select 1 from public.academic_years y
+      where y.id = classes.academic_year_id and y.school_id = app.current_school_id())
+    and exists (select 1 from public.school_grades g
+      where g.id = classes.grade_id and g.school_id = app.current_school_id())
+  );
+create policy rls_select_classes
+  on public.classes for select to authenticated
+  using (school_id = app.current_school_id() and app.is_active_user());
+create policy rls_update_classes
+  on public.classes for update to authenticated
+  using (school_id = app.current_school_id() and app.has_perm('academics.structure.manage'))
+  with check (
+    school_id = app.current_school_id()
+    and app.has_perm('academics.structure.manage')
+    and exists (select 1 from public.academic_years y
+      where y.id = classes.academic_year_id and y.school_id = app.current_school_id())
+    and exists (select 1 from public.school_grades g
+      where g.id = classes.grade_id and g.school_id = app.current_school_id())
+  );
+create policy rls_delete_classes
+  on public.classes for delete to authenticated
+  using (school_id = app.current_school_id() and app.is_admin());
+
+drop policy if exists rls_select_grade_subjects on public.grade_subjects;
+drop policy if exists rls_insert_grade_subjects on public.grade_subjects;
+drop policy if exists rls_update_grade_subjects on public.grade_subjects;
+drop policy if exists rls_delete_grade_subjects on public.grade_subjects;
+create policy rls_insert_grade_subjects
+  on public.grade_subjects for insert to authenticated
+  with check (
+    app.has_perm('academics.structure.manage')
+    and exists (
+      select 1 from public.academic_years y
+      join public.school_grades g on g.school_id = y.school_id
+      join public.subjects s on s.school_id = y.school_id
+      where y.id = grade_subjects.academic_year_id and g.id = grade_subjects.grade_id
+        and s.id = grade_subjects.subject_id and y.school_id = app.current_school_id()
+    )
+  );
+create policy rls_select_grade_subjects
+  on public.grade_subjects for select to authenticated
+  using (
+    app.is_active_user()
+    and exists (
+      select 1 from public.academic_years y
+      join public.school_grades g on g.school_id = y.school_id
+      join public.subjects s on s.school_id = y.school_id
+      where y.id = grade_subjects.academic_year_id and g.id = grade_subjects.grade_id
+        and s.id = grade_subjects.subject_id and y.school_id = app.current_school_id()
+    )
+  );
+create policy rls_update_grade_subjects
+  on public.grade_subjects for update to authenticated
+  using (app.has_perm('academics.structure.manage') and exists (
+    select 1 from public.academic_years y where y.id = grade_subjects.academic_year_id
+      and y.school_id = app.current_school_id()))
+  with check (
+    app.has_perm('academics.structure.manage')
+    and exists (
+      select 1 from public.academic_years y
+      join public.school_grades g on g.school_id = y.school_id
+      join public.subjects s on s.school_id = y.school_id
+      where y.id = grade_subjects.academic_year_id and g.id = grade_subjects.grade_id
+        and s.id = grade_subjects.subject_id and y.school_id = app.current_school_id()
+    )
+  );
+create policy rls_delete_grade_subjects
+  on public.grade_subjects for delete to authenticated
+  using (app.is_admin() and exists (
+    select 1 from public.academic_years y where y.id = grade_subjects.academic_year_id
+      and y.school_id = app.current_school_id()));
+
+drop policy if exists rls_select_assessment_types on public.assessment_types;
+drop policy if exists rls_insert_assessment_types on public.assessment_types;
+drop policy if exists rls_update_assessment_types on public.assessment_types;
+drop policy if exists rls_delete_assessment_types on public.assessment_types;
+create policy rls_select_assessment_types
+  on public.assessment_types for select to authenticated
+  using (school_id = app.current_school_id() and app.is_active_user());
+create policy rls_insert_assessment_types
+  on public.assessment_types for insert to authenticated
+  with check (school_id = app.current_school_id()
+    and app.has_perm('academics.structure.manage'));
+create policy rls_update_assessment_types
+  on public.assessment_types for update to authenticated
+  using (school_id = app.current_school_id()
+    and app.has_perm('academics.structure.manage'))
+  with check (school_id = app.current_school_id()
+    and app.has_perm('academics.structure.manage'));
+create policy rls_delete_assessment_types
+  on public.assessment_types for delete to authenticated
+  using (school_id = app.current_school_id() and app.is_admin());
