@@ -194,6 +194,5 @@ export const characterManifest = [
 
 // The two schoolyard-friends images are group compositions, not separable character layers.
 export const characterGroupArtwork = [
-  "assets/images/Cheerful-Schoolyard-Friends-Transparent.png",
   "assets/images/Cheerful-Schoolyard-Friends-With-Background.png",
 ];

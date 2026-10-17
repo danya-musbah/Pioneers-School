@@ -4,6 +4,7 @@ import {
   localPageCards,
   decorativeStickers,
   studentFloatingIcons,
+  schoolIconConstellations,
 } from "./data.js";
 import { getSupabaseClient, hasSupabaseConfig } from "./supabase-client.js";
 import {
@@ -20,8 +21,53 @@ const state = {
   loggedIn: false,
   authUser: null,
   student: null,
+  sessionNotice: "",
 };
+const phonePrimaryPortalPages = new Set([
+  "home",
+  "attendance",
+  "results",
+  "fees",
+]);
+const portalRequestTimeout = 15000;
 let revealObserver;
+let logoutTrigger = null;
+let loginInProgress = false;
+let logoutInProgress = false;
+let authStateSubscription;
+let explicitSignOutInProgress = false;
+
+function portalPageFromLocation() {
+  const match = window.location.hash.match(/^#student\/([a-z-]+)$/);
+  return match && localPageCards.some((card) => card.page === match[1])
+    ? match[1]
+    : null;
+}
+
+function syncPortalLocation(page, replace = false) {
+  const hash = `#student/${page}`;
+  if (window.location.hash === hash) return;
+  const method = replace ? "replaceState" : "pushState";
+  window.history[method]({ portalPage: page }, "", hash);
+}
+
+function closePortalMoreMenu(restoreFocus = false) {
+  const menu = app.querySelector("[data-portal-more-menu]");
+  const trigger = app.querySelector("[data-portal-more]");
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  trigger?.setAttribute("aria-expanded", "false");
+  if (restoreFocus) trigger?.focus({ preventScroll: true });
+}
+
+function scrollPortalToTop() {
+  window.scrollTo({
+    top: 0,
+    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "auto"
+      : "smooth",
+  });
+}
 
 function mount() {
   renderApp();
@@ -110,6 +156,99 @@ function escapeHTML(value) {
   );
 }
 
+function withRequestTimeout(request, stage, timeoutMs = portalRequestTimeout) {
+  const controller = new AbortController();
+  let timeoutId;
+  const pending = Promise.resolve().then(() => request(controller.signal));
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      controller.abort();
+      reject(new Error(`student_portal:timeout:${stage}`));
+    }, timeoutMs);
+  });
+  return Promise.race([pending, timeout]).finally(() => {
+    window.clearTimeout(timeoutId);
+  });
+}
+
+async function clearLocalSession(client, stage = "auth_cleanup") {
+  if (!client) return;
+  try {
+    await withRequestTimeout(
+      () => client.auth.signOut({ scope: "local" }),
+      stage,
+      5000,
+    );
+  } catch (error) {
+    logPortalDiagnostic(stage, error);
+  }
+}
+
+function logPortalDiagnostic(stage, error) {
+  if (!/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)) return;
+  const code =
+    error instanceof Error &&
+    /^student_portal:[a-z0-9:_-]+$/i.test(error.message)
+      ? error.message
+      : typeof error?.diagnosticCode === "string" &&
+          /^[a-z0-9_-]{1,32}$/i.test(error.diagnosticCode)
+        ? error.diagnosticCode
+        : error?.name === "AbortError"
+          ? "request_aborted"
+          : error instanceof Error &&
+              ["Failed to fetch", "Load failed"].includes(error.message)
+            ? "network_error"
+            : error instanceof Error &&
+                /^[A-Z][A-Za-z0-9]{0,31}$/.test(error.name)
+              ? error.name
+              : "unclassified_error";
+  const status = Number.isInteger(error?.status) ? error.status : undefined;
+  console.warn("[student-portal] Request failed", {
+    stage,
+    code,
+    ...(status ? { status } : {}),
+  });
+}
+
+function diagnosticError(message, providerError) {
+  const error = new Error(message);
+  if (
+    typeof providerError?.code === "string" &&
+    /^[a-z0-9_-]{1,32}$/i.test(providerError.code)
+  ) {
+    error.diagnosticCode = providerError.code;
+  }
+  if (Number.isInteger(providerError?.status)) {
+    error.status = providerError.status;
+  }
+  return error;
+}
+
+function isExpiredSessionError(error) {
+  return (
+    error?.status === 401 ||
+    ["PGRST301", "PGRST302", "invalid_token", "jwt_expired"].includes(
+      error?.diagnosticCode,
+    )
+  );
+}
+
+function monitorAuthState(client) {
+  if (authStateSubscription) return;
+  const { data } = client.auth.onAuthStateChange((event) => {
+    if (event !== "SIGNED_OUT" || !state.loggedIn || explicitSignOutInProgress)
+      return;
+    state.student = null;
+    state.authUser = null;
+    state.loggedIn = false;
+    state.page = "login";
+    state.activePanel = "home";
+    state.sessionNotice = "انتهت الجلسة. سجّل الدخول مجددًا للمتابعة.";
+    renderApp();
+  });
+  authStateSubscription = data?.subscription;
+}
+
 function formatAmount(amount) {
   return `${Number(amount ?? 0).toLocaleString("ar-LY", {
     minimumFractionDigits: 0,
@@ -156,14 +295,47 @@ function renderWhatsAppLink(
   return `<a class="${className}" href="${href}" target="_blank" rel="noopener noreferrer">${icon}<span>${escapeHTML(label)}</span><i class="whatsapp-link__arrow" data-lucide="arrow-up-left" aria-hidden="true"></i>${motif}</a>`;
 }
 
+const iconConstellationPaths = new Set(
+  Object.values(schoolIconConstellations).flat(),
+);
+const iconConstellationSlots = [
+  { left: "7%", top: "13%", size: "34px", rotate: "-12deg" },
+  { left: "24%", top: "7%", size: "23px", rotate: "9deg" },
+  { left: "79%", top: "12%", size: "29px", rotate: "-7deg" },
+  { left: "91%", top: "45%", size: "22px", rotate: "12deg" },
+  { left: "12%", top: "74%", size: "26px", rotate: "7deg" },
+  { left: "68%", top: "82%", size: "31px", rotate: "-9deg" },
+];
+
+function renderIconConstellation(icons, variant) {
+  const decorations = icons
+    .filter((icon) => iconConstellationPaths.has(icon))
+    .map((icon, index) => {
+      const slot =
+        iconConstellationSlots[index % iconConstellationSlots.length];
+      return `<img class="icon-constellation__icon" src="${escapeHTML(icon)}" alt="" loading="lazy" decoding="async" style="--icon-left:${slot.left};--icon-top:${slot.top};--icon-size:${slot.size};--icon-rotate:${slot.rotate};--icon-delay:${index * -420}ms" />`;
+    })
+    .join("");
+  return `<div class="icon-constellation icon-constellation--${variant}" aria-hidden="true">${decorations}</div>`;
+}
+
 function mapPortalData(data) {
-  const source = data.student;
-  const attendance = data.attendance ?? {};
+  const source = data?.student ?? {};
+  const attendance = data?.attendance ?? {};
+  const attendanceRecords = Array.isArray(attendance.records)
+    ? attendance.records
+    : [];
+  const results = Array.isArray(data?.results) ? data.results : [];
+  const feeRecords = Array.isArray(data?.fees) ? data.fees : [];
   const timetable = Array.isArray(data.timetable) ? data.timetable : [];
   const dayGroups = new Map();
 
   timetable.forEach((entry) => {
     const dayNumber = Number(entry.day_number);
+    const startTime =
+      typeof entry.start_time === "string" ? entry.start_time.slice(0, 5) : "—";
+    const endTime =
+      typeof entry.end_time === "string" ? entry.end_time.slice(0, 5) : "";
     if (!dayGroups.has(dayNumber)) {
       dayGroups.set(dayNumber, {
         day_number: dayNumber,
@@ -173,7 +345,7 @@ function mapPortalData(data) {
     }
     dayGroups.get(dayNumber).lessons.push({
       period: escapeHTML(entry.period || "حصة"),
-      time: `${entry.start_time ? escapeHTML(entry.start_time.slice(0, 5)) : "—"}${entry.end_time ? `–${escapeHTML(entry.end_time.slice(0, 5))}` : ""}`,
+      time: `${startTime === "—" ? startTime : escapeHTML(startTime)}${endTime ? `–${escapeHTML(endTime)}` : ""}`,
       subject: escapeHTML(entry.subject || "مادة دراسية"),
       teacher: escapeHTML(entry.teacher || ""),
       room: escapeHTML(entry.room || ""),
@@ -191,36 +363,49 @@ function mapPortalData(data) {
       present: Number(attendance.present ?? 0),
       late: Number(attendance.late ?? 0),
       absent: Number(attendance.absent ?? 0),
-      recordCount: (attendance.records ?? []).length,
-      percent: (attendance.records ?? []).length
+      recordCount: attendanceRecords.length,
+      percent: attendanceRecords.length
         ? Number(attendance.percent ?? 0)
         : null,
     },
-    attendanceRecords: (attendance.records ?? []).map((record) => ({
-      date: escapeHTML(record.date),
-      status: escapeHTML(record.status || "غير محدد"),
-      lateMinutes: Number(record.minutes_late ?? 0),
-    })),
-    results: (data.results ?? []).map((result) => ({
-      subject: escapeHTML(result.subject || "مادة دراسية"),
-      grade: escapeHTML(result.grade || "—"),
-      percentage:
-        result.percentage === null || result.percentage === undefined
-          ? null
-          : Number(result.percentage),
-    })),
-    feeRecords: (data.fees ?? []).map((fee) => ({
-      label: escapeHTML(fee.label || "رسوم دراسية"),
-      status: escapeHTML(fee.status || "غير محدد"),
-      total: Number(fee.total ?? 0),
-      paid: Number(fee.paid ?? 0),
-      remaining: Number(fee.remaining ?? 0),
-    })),
+    attendanceRecords: attendanceRecords.map((record) => {
+      const item = record && typeof record === "object" ? record : {};
+      return {
+        date: escapeHTML(item.date),
+        status: escapeHTML(item.status || "غير محدد"),
+        lateMinutes: Number(item.minutes_late ?? 0),
+      };
+    }),
+    results: results.map((result) => {
+      const item = result && typeof result === "object" ? result : {};
+      return {
+        subject: escapeHTML(item.subject || "مادة دراسية"),
+        grade: escapeHTML(item.grade || "—"),
+        percentage:
+          item.percentage === null || item.percentage === undefined
+            ? null
+            : Number(item.percentage),
+      };
+    }),
+    feeRecords: feeRecords.map((fee) => {
+      const item = fee && typeof fee === "object" ? fee : {};
+      return {
+        label: escapeHTML(item.label || "رسوم دراسية"),
+        status: escapeHTML(item.status || "غير محدد"),
+        total: Number(item.total ?? 0),
+        paid: Number(item.paid ?? 0),
+        remaining: Number(item.remaining ?? 0),
+      };
+    }),
     timetable: [...dayGroups.values()],
     todayAgenda: timetable
       .filter((entry) => Number(entry.day_number) === new Date().getDay())
       .map((entry) => ({
-        time: escapeHTML(entry.start_time?.slice(0, 5) || "—"),
+        time: escapeHTML(
+          typeof entry.start_time === "string"
+            ? entry.start_time.slice(0, 5)
+            : "—",
+        ),
         subject: escapeHTML(entry.subject || "حصة"),
         teacher: escapeHTML(entry.teacher || ""),
         room: escapeHTML(entry.room || ""),
@@ -230,41 +415,71 @@ function mapPortalData(data) {
 }
 
 async function loadStudentPortal(client) {
-  const { data: sessionData, error: sessionError } = await client.rpc(
+  const { data: sessionData, error: sessionError } = await withRequestTimeout(
+    (signal) => client.rpc("student_portal_session").abortSignal(signal),
     "student_portal_session",
   );
-  if (sessionError || !sessionData?.student?.id) {
-    throw new Error("student_session_unavailable");
-  }
+  if (sessionError)
+    throw diagnosticError(
+      "student_portal:session_request_failed",
+      sessionError,
+    );
+  if (!sessionData?.student?.id)
+    throw new Error("student_portal:account_not_linked");
 
-  const [portalResult, identityResult] = await Promise.all([
-    client.rpc("student_portal_data"),
-    client
-      .rpc("student_portal_identity")
-      .catch((error) => ({ data: null, error })),
-  ]);
-  const { data, error } = portalResult;
-  if (error || !data?.student?.id) {
-    throw new Error("student_data_unavailable");
-  }
-  const student = mapPortalData(data);
-  const identity = identityResult.error ? null : identityResult.data?.student;
-  student.gender = normalizeStudentGender(identity?.gender);
-  student.photoUrl = identity
-    ? [identity.avatar_path, identity.photo_path]
-        .map(safeStudentPhotoUrl)
-        .find(Boolean) || null
-    : null;
-  student.hasPhotoReference = Boolean(
-    identity &&
-    [
-      identity.avatar_storage_path,
-      identity.photo_storage_path,
-      identity.avatar_path,
-      identity.photo_path,
-    ].some((value) => typeof value === "string" && value.trim()),
+  const portalResult = await withRequestTimeout(
+    (signal) => client.rpc("student_portal_data").abortSignal(signal),
+    "student_portal_data",
   );
+  const { data, error } = portalResult;
+  if (error) throw diagnosticError("student_portal:data_request_failed", error);
+  if (!data?.student?.id)
+    throw new Error("student_portal:record_not_available");
+  if (data.student.id !== sessionData.student.id)
+    throw new Error("student_portal:identity_mismatch");
+  let student;
+  try {
+    student = mapPortalData(data);
+  } catch (error) {
+    logPortalDiagnostic("student_portal_mapping", error);
+    throw new Error("student_portal:data_mapping_failed");
+  }
+  student.gender = "unknown";
+  student.photoUrl = null;
+  student.hasPhotoReference = false;
   return student;
+}
+
+function studentPortalFailureMessage(error) {
+  const code = error instanceof Error ? error.message : "";
+  if (code === "student_portal:account_not_linked") {
+    return "تم التحقق من كلمة المرور، لكن حساب الدخول غير مربوط بملف طالب نشط. يُرجى من إدارة المدرسة مراجعة ربط حساب البوابة.";
+  }
+  if (code === "student_portal:session_request_failed") {
+    return "تم التحقق من الدخول، لكن تعذر التحقق من صلاحية ربط الحساب. أعد المحاولة، وإن استمرت المشكلة فتواصل مع إدارة المدرسة.";
+  }
+  if (code === "student_portal:record_not_available") {
+    return "تم التعرف على الحساب، لكن ملف الطالب غير متاح للبوابة. يُرجى من إدارة المدرسة مراجعة القيد ونشر بيانات البوابة.";
+  }
+  if (code === "student_portal:identity_mismatch") {
+    return "تعذر مطابقة ملف الطالب مع جلسة الدخول. أوقفنا فتح البوابة حفاظًا على خصوصية البيانات؛ تواصل مع إدارة المدرسة.";
+  }
+  if (code === "student_portal:data_request_failed") {
+    return "تم التحقق من الدخول، لكن تعذر تحميل بيانات الطالب حاليًا. أعد المحاولة، وإن استمرت المشكلة فتواصل مع إدارة المدرسة.";
+  }
+  if (code === "student_portal:data_mapping_failed") {
+    return "تم التحقق من الدخول، لكن تعذر تجهيز بيانات البوابة. أعد المحاولة، وإن استمرت المشكلة فتواصل مع إدارة المدرسة.";
+  }
+  if (code === "student_portal:client_unavailable") {
+    return "تعذر تهيئة خدمة الدخول. تحقق من الاتصال أو تواصل مع إدارة المدرسة.";
+  }
+  if (code.startsWith("student_portal:timeout:")) {
+    if (code.endsWith(":student_login")) {
+      return "تأخر التحقق من بيانات الدخول. تحقق من الاتصال ثم أعد المحاولة.";
+    }
+    return "استغرق تحميل البوابة وقتًا أطول من المتوقع. تحقق من الاتصال ثم أعد المحاولة.";
+  }
+  return "تم التحقق من الدخول، لكن تعذر تحميل البوابة. يُرجى المحاولة لاحقًا أو التواصل مع إدارة المدرسة.";
 }
 
 function safeStudentPhotoUrl(value) {
@@ -284,9 +499,26 @@ function safeStudentPhotoUrl(value) {
 async function hydrateStudentPhoto(client, student) {
   if (!student?.hasPhotoReference) return;
   try {
-    const { data, error } = await client.functions.invoke("student-avatar");
-    const signedUrl = error ? null : safeStudentPhotoUrl(data?.image_url);
-    if (!signedUrl || state.student !== student) return;
+    const { data, error } = await withRequestTimeout(
+      (signal) => client.functions.invoke("student-avatar", { signal }),
+      "student_avatar",
+    );
+    if (error) {
+      logPortalDiagnostic(
+        "student_avatar",
+        diagnosticError("student_portal:avatar_request_failed", error),
+      );
+      return;
+    }
+    const signedUrl = safeStudentPhotoUrl(data?.image_url);
+    if (!signedUrl) {
+      logPortalDiagnostic(
+        "student_avatar",
+        new Error("student_portal:avatar_url_unavailable"),
+      );
+      return;
+    }
+    if (state.student !== student) return;
     student.photoUrl = signedUrl;
     app.querySelectorAll("[data-student-portrait]").forEach((image) => {
       image.dataset.fallbackApplied = "false";
@@ -296,11 +528,76 @@ async function hydrateStudentPhoto(client, student) {
       image
         .closest(".student-photo-frame")
         ?.setAttribute("data-avatar-kind", "personal");
+      image.dataset.fallbackSrc =
+        studentPortraitFallbacks[student.gender] ||
+        studentPortraitFallbacks.unknown;
+      image.dataset.fallbackAlt =
+        student.gender === "unknown"
+          ? "مجموعة محايدة من طلاب المدرسة"
+          : "رسم افتراضي للطالب";
       image.alt = "الصورة الشخصية للطالب";
       image.src = signedUrl;
     });
-  } catch {
+  } catch (error) {
     // Keep the local gender-specific portrait when signing is unavailable.
+    logPortalDiagnostic("student_avatar", error);
+  }
+}
+
+async function hydrateStudentIdentity(client, student) {
+  try {
+    const { data, error } = await withRequestTimeout(
+      (signal) => client.rpc("student_portal_identity").abortSignal(signal),
+      "student_portal_identity",
+    );
+    if (error)
+      throw diagnosticError("student_portal:identity_request_failed", error);
+    if (state.student !== student) return;
+
+    const identity = data?.student ?? null;
+    student.gender = normalizeStudentGender(identity?.gender);
+    student.photoUrl = identity
+      ? [identity.avatar_path, identity.photo_path]
+          .map(safeStudentPhotoUrl)
+          .find(Boolean) || null
+      : null;
+    student.hasPhotoReference = Boolean(
+      identity &&
+      [
+        identity.avatar_storage_path,
+        identity.photo_storage_path,
+        identity.avatar_path,
+        identity.photo_path,
+      ].some((value) => typeof value === "string" && value.trim()),
+    );
+
+    const fallback =
+      studentPortraitFallbacks[student.gender] ||
+      studentPortraitFallbacks.unknown;
+    const fallbackAlt =
+      student.gender === "unknown"
+        ? "مجموعة محايدة من طلاب المدرسة"
+        : "رسم افتراضي للطالب";
+    app.querySelectorAll("[data-student-portrait]").forEach((image) => {
+      image.dataset.fallbackSrc = fallback;
+      image.dataset.fallbackAlt = fallbackAlt;
+      image.dataset.fallbackApplied = String(!student.photoUrl);
+      image
+        .closest(".student-photo-frame")
+        ?.setAttribute(
+          "data-avatar-kind",
+          student.photoUrl ? "personal" : student.gender,
+        );
+      image.alt = student.photoUrl ? "الصورة الشخصية للطالب" : fallbackAlt;
+      image.src = student.photoUrl || fallback;
+    });
+
+    if (!student.photoUrl && student.hasPhotoReference) {
+      await hydrateStudentPhoto(client, student);
+    }
+  } catch (error) {
+    // Identity and portrait enrichment are optional; core student data is already rendered.
+    logPortalDiagnostic("student_portal_identity", error);
   }
 }
 
@@ -313,6 +610,7 @@ function setLoginFieldState(field, isError) {
 }
 
 function clearLoginFeedback(form) {
+  state.sessionNotice = "";
   const feedback = form.querySelector(".form-feedback");
   if (feedback) {
     feedback.textContent = "تُحمّل بيانات الطالب بعد التحقق من الحساب.";
@@ -403,23 +701,50 @@ function bindMotionEvents() {
 
 async function restoreSession() {
   if (!hasSupabaseConfig()) return;
+  let client;
   try {
-    const client = await getSupabaseClient();
+    client = await withRequestTimeout(
+      () => getSupabaseClient(),
+      "supabase_client",
+    );
+    if (!client) return;
+    monitorAuthState(client);
     const {
       data: { session },
-    } = await client.auth.getSession();
+    } = await withRequestTimeout(
+      () => client.auth.getSession(),
+      "auth_session_restore",
+    );
     if (!session) return;
     state.student = await loadStudentPortal(client);
     state.authUser = session.user;
     state.loggedIn = true;
+    state.sessionNotice = "";
+    state.activePanel = portalPageFromLocation() || "home";
     state.page = "student";
+    syncPortalLocation(state.activePanel, true);
     renderApp();
-    void hydrateStudentPhoto(client, state.student);
-  } catch {
+    void hydrateStudentIdentity(client, state.student);
+  } catch (error) {
     // Preserve cached auth during temporary network or RPC outages, but never show an unvalidated portal.
     state.student = null;
     state.authUser = null;
     state.loggedIn = false;
+    const sessionExpired = isExpiredSessionError(error);
+    state.page = sessionExpired ? "login" : "home";
+    state.activePanel = "home";
+    state.sessionNotice = sessionExpired
+      ? "انتهت الجلسة. سجّل الدخول مجددًا للمتابعة."
+      : "";
+    if (sessionExpired) {
+      await clearLocalSession(client, "expired_session_cleanup");
+    }
+    try {
+      renderApp();
+    } catch {
+      // Keep the public page available if the portal renderer itself failed.
+    }
+    logPortalDiagnostic("session_restore", error);
   }
 }
 
@@ -427,6 +752,36 @@ function bindGlobalEvents() {
   document.addEventListener("error", handleStudentPortraitError, true);
 
   document.addEventListener("click", (event) => {
+    const logoutDialog = app.querySelector("[data-logout-dialog]");
+    if (event.target.closest("[data-logout-cancel]")) {
+      dismissLogoutConfirmation(logoutDialog, "stay");
+      return;
+    }
+    if (event.target.closest("[data-logout-confirm]")) {
+      dismissLogoutConfirmation(logoutDialog, "logout");
+      void logout();
+      return;
+    }
+    if (event.target === logoutDialog) {
+      dismissLogoutConfirmation(logoutDialog, "stay");
+      return;
+    }
+
+    const moreTrigger = event.target.closest("[data-portal-more]");
+    if (moreTrigger) {
+      const menu = app.querySelector("[data-portal-more-menu]");
+      const isOpening = Boolean(menu?.hidden);
+      if (menu) menu.hidden = !isOpening;
+      moreTrigger.setAttribute("aria-expanded", String(isOpening));
+      if (isOpening) {
+        menu?.querySelector("button")?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    if (!event.target.closest("[data-portal-more-menu]")) {
+      closePortalMoreMenu();
+    }
+
     const navToggle = event.target.closest("[data-nav-toggle]");
     if (navToggle) {
       const isOpen = document.body.classList.toggle("nav-open");
@@ -453,6 +808,7 @@ function bindGlobalEvents() {
 
     const trigger = event.target.closest("[data-target]");
     if (!trigger) return;
+    if (trigger instanceof HTMLAnchorElement) event.preventDefault();
     const target = trigger.dataset.target;
     if (target === "login") {
       closeMobileNav();
@@ -464,22 +820,27 @@ function bindGlobalEvents() {
     } else if (target === "public-home") {
       state.page = "home";
       state.activePanel = "home";
+      window.history.replaceState({}, "", "#home");
       renderApp();
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      scrollPortalToTop();
     } else if (target === "student-dashboard") {
       if (!state.loggedIn || !state.student) return;
       state.page = "student";
       state.activePanel = "home";
+      syncPortalLocation("home");
       renderApp();
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      scrollPortalToTop();
     } else if (target === "logout") {
-      void logout();
+      openLogoutConfirmation(trigger);
     } else if (target.startsWith("page:")) {
       if (!state.loggedIn || !state.student) return;
-      state.activePanel = target.slice("page:".length);
+      const page = target.slice("page:".length);
+      if (!localPageCards.some((card) => card.page === page)) return;
+      state.activePanel = page;
       state.page = "student";
+      syncPortalLocation(page);
       renderApp();
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      scrollPortalToTop();
     }
   });
 
@@ -513,8 +874,84 @@ function bindGlobalEvents() {
   });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeMobileNav();
+    if (event.key !== "Escape") return;
+    const moreMenu = app.querySelector("[data-portal-more-menu]");
+    if (moreMenu && !moreMenu.hidden) {
+      event.preventDefault();
+      closePortalMoreMenu(true);
+      return;
+    }
+    const logoutDialog = app.querySelector("[data-logout-dialog]");
+    if (logoutDialog?.open) {
+      event.preventDefault();
+      dismissLogoutConfirmation(logoutDialog, "stay");
+      return;
+    }
+    closeMobileNav();
   });
+
+  window.addEventListener("popstate", () => {
+    if (state.loggedIn && state.student) {
+      state.page = "student";
+      state.activePanel = portalPageFromLocation() || "home";
+      closePortalMoreMenu();
+      renderApp();
+      scrollPortalToTop();
+      return;
+    }
+    if (state.page === "login") {
+      state.page = "home";
+      state.sessionNotice = "";
+      renderApp();
+    }
+  });
+}
+
+function openLogoutConfirmation(trigger) {
+  const dialog = app.querySelector("[data-logout-dialog]");
+  if (!dialog || dialog.open) return;
+
+  if (dialog.dataset.cancelBound !== "true") {
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      dismissLogoutConfirmation(dialog, "stay");
+    });
+    dialog.dataset.cancelBound = "true";
+  }
+
+  logoutTrigger = trigger;
+  dialog.addEventListener(
+    "close",
+    () => {
+      if (dialog.returnValue !== "logout") {
+        restoreLogoutFocus();
+      } else {
+        logoutTrigger = null;
+      }
+    },
+    { once: true },
+  );
+  dialog.showModal();
+  dialog.querySelector("[data-logout-cancel]")?.focus({ preventScroll: true });
+}
+
+function dismissLogoutConfirmation(dialog, returnValue) {
+  if (!dialog?.open) return;
+  dialog.close(returnValue);
+  if (returnValue !== "logout") restoreLogoutFocus();
+}
+
+function restoreLogoutFocus() {
+  const trigger =
+    logoutTrigger?.isConnected && logoutTrigger.getClientRects().length
+      ? logoutTrigger
+      : [...app.querySelectorAll('[data-target="logout"]')].find(
+          (candidate) => candidate.getClientRects().length,
+        );
+  logoutTrigger = null;
+  if (!trigger?.isConnected) return;
+  trigger.focus({ preventScroll: true });
+  window.setTimeout(() => trigger.focus({ preventScroll: true }), 0);
 }
 
 function selectFeature(key) {
@@ -541,6 +978,7 @@ function selectFeature(key) {
 }
 
 async function submitLogin(form) {
+  if (loginInProgress) return;
   const input = form.querySelector('input[name="studentNumber"]');
   const password = form.querySelector('input[name="password"]');
   const feedback = form.querySelector(".form-feedback");
@@ -568,24 +1006,40 @@ async function submitLogin(form) {
   }
 
   submitButton.disabled = true;
+  loginInProgress = true;
   submitButton.setAttribute("aria-busy", "true");
   submitButton.classList.add("is-loading");
   submitLabel.textContent = "جارٍ التحقق";
   feedback.textContent = "نتحقق من بيانات الدخول بأمان…";
   feedback.dataset.state = "info";
+  state.sessionNotice = "";
   setLoginFieldState(input, false);
   setLoginFieldState(password, false);
   refreshIcons();
 
   let client;
+  let stage = "supabase_client";
+  let sessionTouched = false;
+  let portalStateAssigned = false;
   let failureMessage =
     "تعذر الاتصال بخدمة البوابة. تحقق من اتصال الإنترنت أو تواصل مع إدارة المدرسة.";
   try {
-    client = await getSupabaseClient();
-    const { data: loginData, error: loginError } =
-      await client.functions.invoke("student-login", {
-        body: { student_number: username, password: secret },
-      });
+    client = await withRequestTimeout(
+      () => getSupabaseClient(),
+      "supabase_client",
+    );
+    if (!client) throw new Error("student_portal:client_unavailable");
+    monitorAuthState(client);
+
+    stage = "student_login";
+    const { data: loginData, error: loginError } = await withRequestTimeout(
+      (signal) =>
+        client.functions.invoke("student-login", {
+          body: { student_number: username, password: secret },
+          signal,
+        }),
+      "student_login",
+    );
 
     if (loginError || !loginData?.access_token || !loginData?.refresh_token) {
       try {
@@ -597,10 +1051,15 @@ async function submitLogin(form) {
       } catch {
         // Keep network/provider details out of the login form.
       }
-      setLoginFieldState(password, true);
-      throw new Error("login_failed");
+      if (loginError?.status === 401) setLoginFieldState(password, true);
+      throw diagnosticError("login_failed", loginError);
     }
 
+    stage = "auth_session";
+    failureMessage =
+      "تم التحقق من بيانات الدخول، لكن تعذر تهيئة جلسة آمنة. أعد المحاولة أو تواصل مع إدارة المدرسة.";
+    submitLabel.textContent = "جارٍ فتح البوابة";
+    sessionTouched = true;
     const { data: authData, error: sessionError } =
       await client.auth.setSession({
         access_token: loginData.access_token,
@@ -610,56 +1069,99 @@ async function submitLogin(form) {
       throw new Error("login_session_unavailable");
     }
 
+    stage = "student_portal";
     failureMessage =
-      "تم التحقق من الدخول لكن تعذر تحميل بيانات البوابة. تحقق من صلاحية الحساب ونشر بيانات الطالب.";
+      "تم التحقق من الدخول، لكن تعذر تحميل البوابة حاليًا. أعد المحاولة، وإن استمرت المشكلة فتواصل مع إدارة المدرسة.";
     const studentData = await loadStudentPortal(client);
+
+    if (!form.isConnected) {
+      await clearLocalSession(client);
+      return;
+    }
+
+    stage = "student_portal_render";
     state.student = studentData;
     state.authUser = authData.user;
     state.loggedIn = true;
     state.activePanel = "home";
     state.page = "student";
+    portalStateAssigned = true;
+    syncPortalLocation("home", true);
     renderApp();
-    void hydrateStudentPhoto(client, state.student);
-  } catch {
-    try {
-      await client?.auth.signOut({ scope: "local" });
-    } catch {
-      // Keep provider details and credentials out of the UI.
+    void hydrateStudentIdentity(client, state.student);
+  } catch (error) {
+    logPortalDiagnostic(stage, error);
+    if (error instanceof Error && error.message.startsWith("student_portal:")) {
+      failureMessage = studentPortalFailureMessage(error);
     }
-    feedback.textContent = failureMessage;
-    feedback.dataset.state = "error";
-    submitButton.disabled = false;
-    submitButton.removeAttribute("aria-busy");
-    submitButton.classList.remove("is-loading");
-    submitLabel.textContent = "دخول آمن";
-    refreshIcons();
+    if (portalStateAssigned) {
+      state.student = null;
+      state.authUser = null;
+      state.loggedIn = false;
+      state.activePanel = "home";
+      state.page = "login";
+      try {
+        renderApp();
+      } catch {
+        app.innerHTML = renderLoginPage();
+      }
+    }
+    if (sessionTouched) {
+      await clearLocalSession(client);
+    }
+    const visibleFeedback =
+      state.page === "login"
+        ? app.querySelector(".form-feedback") || feedback
+        : null;
+    if (visibleFeedback) {
+      visibleFeedback.textContent = failureMessage;
+      visibleFeedback.dataset.state = "error";
+    }
+  } finally {
+    loginInProgress = false;
+    if (form.isConnected && state.page === "login") {
+      submitButton.disabled = false;
+      submitButton.removeAttribute("aria-busy");
+      submitButton.classList.remove("is-loading");
+      submitLabel.textContent = "دخول آمن";
+      refreshIcons();
+    }
   }
 }
 
 async function logout() {
+  if (logoutInProgress) return;
+  logoutInProgress = true;
   let client;
+  explicitSignOutInProgress = true;
   try {
-    client = await getSupabaseClient();
-    if (client) await client.auth.signOut();
-  } catch {
-    try {
-      await client?.auth.signOut({ scope: "local" });
-    } catch {
-      // Clear the visible portal even when the auth network is unavailable.
+    client = await withRequestTimeout(
+      () => getSupabaseClient(),
+      "supabase_client",
+    );
+    if (client) {
+      await withRequestTimeout(() => client.auth.signOut(), "sign_out");
     }
+  } catch {
+    await clearLocalSession(client, "logout_cleanup");
+  } finally {
+    explicitSignOutInProgress = false;
+    logoutInProgress = false;
   }
   state.student = null;
   state.authUser = null;
   state.loggedIn = false;
   state.page = "home";
   state.activePanel = "home";
+  state.sessionNotice = "";
+  window.history.replaceState({}, "", "#home");
   renderApp();
 }
 
 function revealActivePortalNavItem() {
   if (!window.matchMedia("(max-width: 880px)").matches) return;
   const activeItem = app.querySelector(".portal-nav__item.is-active");
-  if (!activeItem) return;
+  if (!activeItem?.getClientRects().length) return;
   activeItem.scrollIntoView({
     block: "nearest",
     inline: "nearest",
@@ -729,22 +1231,24 @@ function renderPublicLanding() {
               </div>
             </div>
 
-            <div class="hero-scene" data-parallax-scene data-reveal aria-label="طالب في طريقه إلى المدرسة">
+            <div class="hero-scene" data-parallax-scene data-reveal aria-label="طالب وطالبة من مدرسة رواد العلم">
               <div class="hero-scene__paper"></div>
               <div class="hero-scene__sun" aria-hidden="true"></div>
-              <div class="hero-scene__label hero-scene__label--top"><i data-lucide="book-open-check"></i><span>مساحة للتعلّم</span></div>
-              <img class="hero-scene__character" src="assets/images/Schoolboy-Curly-Hair-Smiling-Waving-Looking-Right.png" alt="طالب يحمل كتابه ويرتدي الزي المدرسي" fetchpriority="high" />
+              <div class="hero-scene__label hero-scene__label--top"><i data-lucide="book-open-check"></i><span>نتعلّم معًا</span></div>
+              <img class="hero-scene__character hero-scene__character--girl" src="assets/images/Schoolgirl-Side-Swept-Hair-Holding-Sign-Looking-Left.png" alt="طالبة من المدرسة تحمل لوحة" fetchpriority="high" />
+              <img class="hero-scene__character hero-scene__character--boy" src="assets/images/Schoolboy-Standing-Holding-Sign-Looking-Right.png" alt="طالب من المدرسة يحمل لوحة" fetchpriority="high" />
               <img class="sticker sticker--sun" src="${decorativeStickers[0]}" alt="" aria-hidden="true" />
               <img class="sticker sticker--heart" src="${decorativeStickers[1]}" alt="" aria-hidden="true" />
               <img class="sticker sticker--flower" src="${decorativeStickers[2]}" alt="" aria-hidden="true" />
-              <div class="hero-scene__label hero-scene__label--bottom"><i data-lucide="calendar-days"></i><span>يوم دراسي أكثر وضوحًا</span></div>
-              <span class="scene-caption">نرافق الرحلة، ولا نستبدلها.</span>
+              <div class="hero-scene__label hero-scene__label--bottom"><i data-lucide="calendar-days"></i><span>مساحة لكل طالب</span></div>
+              <span class="scene-caption">رحلة واحدة، وأحلام كثيرة.</span>
             </div>
           </div>
           <a class="scroll-cue" href="#school"><span>اكتشف المدرسة</span><i data-lucide="arrow-down"></i></a>
         </section>
 
         <section class="school-story section-space" id="school" aria-labelledby="school-title">
+          ${renderIconConstellation(schoolIconConstellations.school, "school")}
           <div class="container story__layout">
             <div class="story__index" data-reveal>
               <span class="section-index">01 <span></span> المدرسة</span>
@@ -767,6 +1271,7 @@ function renderPublicLanding() {
         </section>
 
         <section class="portal-tour section-space" id="portal-features" aria-labelledby="features-title">
+          ${renderIconConstellation(schoolIconConstellations.portal, "portal")}
           <div class="container">
             <div class="section-heading section-heading--split" data-reveal>
               <div>
@@ -799,9 +1304,12 @@ function renderPublicLanding() {
                   </div>
                 </div>
                 <div class="feature-preview__copy">
-                  <span class="feature-preview__note" data-feature-preview-note>${initialFeature.note}</span>
-                  <h3 data-feature-preview-title>${initialFeature.title}</h3>
-                  <p data-feature-preview-body>${initialFeature.description}</p>
+                  <div class="feature-preview__text">
+                    <span class="feature-preview__note" data-feature-preview-note>${initialFeature.note}</span>
+                    <h3 data-feature-preview-title>${initialFeature.title}</h3>
+                    <p data-feature-preview-body>${initialFeature.description}</p>
+                  </div>
+                  ${studentArtworkImage(studentArtwork.pages.attendance.active, "feature-preview__character")}
                 </div>
               </article>
             </div>
@@ -809,10 +1317,11 @@ function renderPublicLanding() {
         </section>
 
         <section class="journey section-space" id="journey" aria-labelledby="journey-title">
+          ${renderIconConstellation(schoolIconConstellations.journey, "journey")}
           <div class="container journey__layout">
             <div class="journey__art" data-reveal>
               <div class="journey__frame"></div>
-              <img src="${studentArtwork.schoolyardScene}" alt="مجموعة من الطلاب بزي المدرسة يتشاركون التعلّم" loading="lazy" />
+              <img src="${escapeHTML(studentArtwork.schoolyardScene)}" alt="مجموعة من طلاب وطالبات المدرسة في ساحة التعلّم" loading="lazy" decoding="async" />
               <img class="sticker sticker--journey" src="${decorativeStickers[3]}" alt="" aria-hidden="true" />
               <span class="journey__caption">معًا في طريق المعرفة</span>
             </div>
@@ -830,10 +1339,14 @@ function renderPublicLanding() {
         </section>
 
         <section class="stages-section section-space" id="stages" aria-labelledby="stages-title">
+          ${renderIconConstellation(schoolIconConstellations.stages, "stages")}
           <div class="container">
             <div class="section-heading section-heading--center" data-reveal>
               <span class="section-index">04 <span></span> المراحل</span>
-              <h2 id="stages-title">لكل مرحلة،<br /><em>بدايتها الجميلة.</em></h2>
+              <div class="stage-heading__lockup">
+                ${studentArtworkImage(studentArtwork.home.schedule.empty, "stage-heading__character")}
+                <h2 id="stages-title">لكل مرحلة،<br /><em>بدايتها الجميلة.</em></h2>
+              </div>
               <p>المراحل الدراسية المعروضة وفق تعريف المدرسة.</p>
             </div>
             <div class="stage-path">
@@ -884,6 +1397,10 @@ function renderPublicLanding() {
               <h2 id="closing-title">نبدأ من هنا؟</h2>
               <p>افتح بوابة الطالب لمتابعة البيانات الدراسية المنشورة لحسابك.</p>
               <button class="button button--gold" type="button" data-target="login">دخول الطالب <i data-lucide="arrow-up-left"></i></button>
+              <div class="closing__characters" aria-hidden="true">
+                ${studentArtworkImage(studentArtwork.pages.timetable.active, "closing__character closing__character--runner")}
+                ${studentArtworkImage(studentArtwork.pages.results, "closing__character closing__character--ball")}
+              </div>
             </div>
             <div class="closing__contact" data-reveal>
               <img src="assets/logo.png" alt="شعار المدرسة" loading="lazy" />
@@ -903,6 +1420,7 @@ function renderPublicLanding() {
           <a class="footer__brand" href="#home" data-target="public-home"><img src="assets/logo.png" alt="" loading="lazy" /><span>${schoolProfile.name}</span></a>
           <p>${schoolProfile.slogan}</p>
           <a class="footer__top" href="#home">العودة للأعلى <i data-lucide="arrow-up"></i></a>
+          <div class="footer__developer"><span>تطوير الموقع <strong dir="ltr">Danya Musbah</strong></span><a href="mailto:danyamusbah8@gmail.com"><i data-lucide="mail" aria-hidden="true"></i><span dir="ltr">danyamusbah8@gmail.com</span></a></div>
           <small>© ${new Date().getFullYear()} مدرسة رواد العلم الأولى</small>
         </div>
       </footer>
@@ -931,16 +1449,17 @@ function renderLoginPage() {
             <label class="field-label" for="student-password">كلمة المرور</label>
             <div class="input-shell input-shell--password"><i data-lucide="key-round"></i><input id="student-password" type="password" name="password" data-password-field autocomplete="current-password" placeholder="أدخل كلمة المرور" required /><label class="password-toggle"><input type="checkbox" data-password-toggle aria-label="إظهار كلمة المرور" /><span>إظهار</span></label></div>
             <div class="login-form__help"><i data-lucide="shield-check"></i><span>لا تشارك كلمة المرور مع الآخرين.</span></div>
-            <button class="button button--primary login-submit" type="submit"><i data-lucide="log-in" data-login-spinner></i><span data-login-label>دخول آمن</span></button>
-            <p class="form-feedback" data-state="info" role="status" aria-live="polite">تُحمّل بيانات الطالب بعد التحقق من الحساب.</p>
+            <button class="button button--primary login-submit" type="submit"><img class="login-submit__logo" src="assets/logo.png" alt="" aria-hidden="true" /><i class="login-submit__icon" data-lucide="log-in" aria-hidden="true"></i><span data-login-label>دخول آمن</span></button>
+            <p class="form-feedback" data-state="${state.sessionNotice ? "error" : "info"}" role="status" aria-live="polite">${escapeHTML(state.sessionNotice || "تُحمّل بيانات الطالب بعد التحقق من الحساب.")}</p>
           </form>
           <div class="login-support"><span>تحتاج مساعدة؟</span>${renderWhatsAppLink("تواصل مع المدرسة عبر واتساب", "المساعدة في الدخول إلى البوابة", "whatsapp-link whatsapp-link--login", studentFloatingIcons.contact)}</div>
         </section>
-        <aside class="login-scene" data-parallax-scene data-reveal aria-label="طالبة من مدرسة رواد العلم">
+        <aside class="login-scene" data-parallax-scene data-reveal aria-label="طالب وطالبة من مدرسة رواد العلم">
+          ${renderIconConstellation(schoolIconConstellations.school.slice(0, 3), "login")}
           <div class="login-scene__orbit"></div>
           <span class="login-scene__tag"><i data-lucide="book-open-check"></i> التعلّم يفتح الأبواب</span>
-          <img class="login-scene__girl" src="assets/images/Schoolgirl-Standing-Holding-Sign-Looking-Left.png" alt="طالبة تحمل كتابًا وترتدي الزي المدرسي" />
-          <img class="login-scene__school" src="${studentArtwork.loginBackground}" alt="مبنى مدرسة رواد العلم الأولى" loading="lazy" />
+          <img class="login-scene__girl" src="assets/images/Schoolgirl-Standing-Holding-Sign-Looking-Left.png" alt="طالبة تحمل لوحة وترتدي الزي المدرسي" />
+          <img class="login-scene__boy" src="assets/images/Schoolboy-Curly-Hair-Smiling-Waving-Looking-Right.png" alt="طالب يرحب بعودتك إلى بوابة المدرسة" fetchpriority="high" />
           <img class="sticker sticker--login" src="${decorativeStickers[4]}" alt="" aria-hidden="true" />
         </aside>
       </div>
@@ -1094,12 +1613,28 @@ function renderPortalHome(student) {
         <div class="student-hero__portrait">
           <span class="hero-orbit hero-orbit--one" aria-hidden="true"></span>
           <span class="hero-orbit hero-orbit--two" aria-hidden="true"></span>
+          <span class="student-hero__portrait-label"><i data-lucide="school" aria-hidden="true"></i><span>مساحة الطالب</span></span>
           ${studentPortraitMarkup(student, "hero", "eager")}
           ${studentArtworkImage(studentArtwork.heroCompanion, "student-hero__companion")}
           <span class="hero-planet hero-planet--blue" aria-hidden="true"></span>
           <span class="hero-planet hero-planet--orange" aria-hidden="true"></span>
         </div>
       </article>
+
+      <aside class="student-community" data-reveal aria-label="مجتمع مدرسة رواد العلم">
+        <div class="student-community__copy">
+          <span class="student-community__eyebrow"><i data-lucide="users-round" aria-hidden="true"></i> مجتمع روّاد العلم</span>
+          <h2>نتعلّم معًا</h2>
+          <p>مساحة تجمع طلابنا في رحلة واحدة نحو المعرفة.</p>
+          <div class="student-community__faces" aria-hidden="true">
+            ${studentArtworkImage(studentArtwork.home.communityFigures[0], "student-community__face")}
+            ${studentArtworkImage(studentArtwork.home.communityFigures[1], "student-community__face")}
+            <span>لكل طالب مكانه</span>
+          </div>
+        </div>
+        <img class="student-community__scene" src="${escapeHTML(studentArtwork.home.communityScene)}" alt="مجموعة من طلاب وطالبات رواد العلم في ساحة المدرسة" loading="lazy" decoding="async" />
+        <span class="student-community__spark" aria-hidden="true"><i data-lucide="sparkles"></i></span>
+      </aside>
 
       <div class="student-home-grid">
         <article class="attendance-feature" data-reveal>
@@ -1292,12 +1827,27 @@ function renderStudentPortal() {
           ${localPageCards
             .map(
               (card) => `
-            <button class="portal-nav__item ${activePage === card.page ? "is-active" : ""}" type="button" data-target="page:${card.page}" ${activePage === card.page ? 'aria-current="page"' : ""}>
+            <button class="portal-nav__item ${activePage === card.page ? "is-active" : ""}" type="button" data-target="page:${card.page}" ${phonePrimaryPortalPages.has(card.page) ? 'data-phone-primary="true"' : ""} ${activePage === card.page ? 'aria-current="page"' : ""}>
               <i data-lucide="${card.icon}"></i><span>${card.label}</span>${activePage === card.page ? '<i class="portal-nav__active-mark" data-lucide="arrow-left"></i>' : ""}
             </button>
           `,
             )
             .join("")}
+          <button class="portal-nav__item portal-nav__more ${!phonePrimaryPortalPages.has(activePage) ? "is-active" : ""}" type="button" data-portal-more aria-expanded="false" aria-controls="portal-nav-more" aria-haspopup="true" aria-label="المزيد من الأقسام">
+            <i data-lucide="ellipsis"></i><span>المزيد</span>
+          </button>
+          <div class="portal-nav__more-menu" id="portal-nav-more" data-portal-more-menu role="group" aria-label="أقسام إضافية" hidden>
+            ${localPageCards
+              .filter((card) => !phonePrimaryPortalPages.has(card.page))
+              .map(
+                (card) => `
+              <button class="portal-nav__more-item ${activePage === card.page ? "is-active" : ""}" type="button" data-target="page:${card.page}" ${activePage === card.page ? 'aria-current="page"' : ""}>
+                <i data-lucide="${card.icon}"></i><span>${card.label}</span>
+              </button>
+            `,
+              )
+              .join("")}
+          </div>
         </nav>
         <div class="portal-sidebar__bottom">${renderWhatsAppLink("تواصل عبر واتساب", "مساعدة بشأن الحساب الدراسي", "whatsapp-link whatsapp-link--sidebar")}<button class="portal-logout" type="button" data-target="logout"><i data-lucide="log-out"></i><span>تسجيل الخروج</span></button></div>
       </aside>
@@ -1307,8 +1857,20 @@ function renderStudentPortal() {
           <div class="student-topbar__actions"><span class="today-date"><i data-lucide="calendar-days"></i>${new Date().toLocaleDateString("ar-LY", { weekday: "long", day: "numeric", month: "long" })}</span><button class="student-topbar__logout" type="button" data-target="logout"><i data-lucide="log-out"></i><span>خروج آمن</span></button>${renderWhatsAppLink("واتساب", "مساعدة بشأن الحساب الدراسي", "whatsapp-link whatsapp-link--quick")}</div>
         </header>
         <div class="student-content" data-portal-view>${renderPortalPageMarkup(activePage, student)}</div>
-        <footer class="student-footer"><span>${schoolProfile.shortName}</span><span>مساحتك الدراسية، في مكان واحد</span></footer>
+        <footer class="student-footer"><span class="student-footer__school">${schoolProfile.shortName}</span><span class="student-footer__motto">مساحتك الدراسية، في مكان واحد</span><a class="student-footer__developer" href="mailto:danyamusbah8@gmail.com"><span>تطوير الموقع</span><strong dir="ltr">Danya Musbah</strong><i data-lucide="mail" aria-hidden="true"></i><span dir="ltr">danyamusbah8@gmail.com</span></a></footer>
       </main>
+      <dialog class="logout-dialog" data-logout-dialog aria-labelledby="logout-dialog-title" aria-describedby="logout-dialog-description">
+        <div class="logout-dialog__content">
+          <span class="logout-dialog__icon" aria-hidden="true"><i data-lucide="log-out"></i></span>
+          <span class="logout-dialog__eyebrow">إلى لقاء قريب</span>
+          <h2 id="logout-dialog-title">هل تريد تسجيل الخروج؟</h2>
+          <p id="logout-dialog-description">ستحتاج إلى بيانات الدخول للعودة إلى مساحتك الدراسية.</p>
+          <div class="logout-dialog__actions">
+            <button class="logout-dialog__stay" type="button" data-logout-cancel>البقاء في الحساب</button>
+            <button class="logout-dialog__confirm" type="button" data-logout-confirm>تسجيل الخروج</button>
+          </div>
+        </div>
+      </dialog>
     </div>
   `;
 }

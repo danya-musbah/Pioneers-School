@@ -1,7 +1,7 @@
 /* =====================================================================
    tokens.css — نظام الإدارة المدرسية / مدرسة رواد العلم الأولى
    Design tokens: school portal visual language.
-   Palette: deep ink, school teal, mint paper, and restrained warm gold.
+  Palette: school blue, clear sky blue, and restrained school orange.
    ===================================================================== */
 
 :root {
@@ -12,13 +12,13 @@
   --scrollbar-thumb-hover: rgba(38, 60, 85, 0.88);
 
   /* ---- Brand palette ---- */
-  --c-ink: #032340; /* primary text, headers */
+  --c-ink: #0d0d0d; /* primary text, headers */
   --c-grey: #ccd3d9; /* borders, dividers, disabled */
-  --c-blue: #17a697; /* primary action, links, focus */
-  --c-blue-deep: #0e8177; /* primary hover/active */
-  --c-sand: #bf9e75; /* secondary accent (badges, highlights) */
-  --c-ochre: #c7985b; /* secondary accent, warm alerts */
-  --c-ochre-back: #c7985b21; /* secondary accent, warm alerts */
+  --c-blue: #0568a6; /* primary action, links, focus */
+  --c-blue-deep: #055ba6; /* primary hover/active */
+  --c-sand: #f28c0f; /* secondary accent (badges, highlights) */
+  --c-ochre: #f28c0f; /* secondary accent, warm alerts */
+  --c-ochre-back: #f28c0f21; /* secondary accent, warm alerts */
   --color-blood-gazelle: #8b1e1e; /* دم الغزال: accent داكن للاستخدام المحدود */
   --color-blood-gazelle-hover: #721818;
   --color-blood-gazelle-active: #5f1414;
@@ -62,7 +62,7 @@
      Arabic-first stack; Tahoma/Segoe UI read cleanly at small sizes on
      older Windows machines common in schools; Latin fallback for mixed
      English/numeral content (§55, §104). */
-  --font-ar: "Segoe UI", Tahoma, "Noto Kufi Arabic", "Dubai", sans-serif;
+  --font-ar: "Tajawal", "Segoe UI", Tahoma, sans-serif;
   --font-en: "Segoe UI", Tahoma, Arial, sans-serif;
   --font-mono: "Consolas", "Courier New", monospace;
 

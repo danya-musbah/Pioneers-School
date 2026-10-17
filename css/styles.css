@@ -1,24 +1,26 @@
 @font-face {
-  font-family: "Amiri";
+  font-family: "Amiri School";
   src: url("../assets/fonts/Amiri-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
   font-display: swap;
 }
 
 :root {
   color-scheme: light;
-  --ink: #032340;
+  --ink: #0d0d0d;
   --ink-soft: #355166;
-  --teal: #17a697;
-  --teal-deep: #0d8177;
-  --teal-bright: #1fbfaf;
-  --mint: #77d9cf;
-  --mint-pale: #e1f4ef;
+  --teal: #0568a6;
+  --teal-deep: #055ba6;
+  --teal-bright: #18a2d9;
+  --mint: #18a2d9;
+  --mint-pale: #e8f5fb;
   --paper: #f2f2f2;
   --paper-warm: #f7f3e9;
   --paper-white: #fffefa;
-  --gold: #e7b94e;
-  --gold-pale: #f7e7b7;
-  --coral: #df775e;
+  --gold: #f28c0f;
+  --gold-pale: #fff0d9;
+  --coral: #18a2d9;
   --muted: #637583;
   --line: #d9e2df;
   --success: #287b5f;
@@ -98,8 +100,6 @@ html {
 }
 body {
   margin: 0;
-  min-width: 320px;
-  overflow-x: hidden;
   background: var(--paper);
   color: var(--ink);
   font-family: var(--font-ar, "Segoe UI", Tahoma, sans-serif);
@@ -186,7 +186,7 @@ button {
 .journey__copy h2,
 .faq__heading h2 {
   margin: 14px 0 0;
-  font-family: "Amiri", var(--font-ar, serif);
+  font-family: var(--font-ar, sans-serif);
   font-size: clamp(2.5rem, 5vw, 4.45rem);
   font-weight: 400;
   line-height: 1.08;
@@ -214,6 +214,23 @@ button {
 .motion-ready [data-reveal].is-visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0.78;
+    translate: 0 7px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+.public-page,
+.login-page,
+.student-shell {
+  animation: page-enter 360ms var(--motion-ease) both;
 }
 
 /* Header and buttons */
@@ -250,6 +267,8 @@ button {
   width: 49px;
   height: 49px;
   object-fit: contain;
+  border-radius: 50%;
+  clip-path: circle(50%);
 }
 .brand__words {
   display: grid;
@@ -369,7 +388,39 @@ button {
   display: none;
 }
 
-/* Public hero — paper, cut shapes, and the original school character */
+.icon-constellation {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.icon-constellation__icon {
+  position: absolute;
+  left: var(--icon-left);
+  top: var(--icon-top);
+  width: var(--icon-size);
+  height: var(--icon-size);
+  object-fit: contain;
+  opacity: 0.22;
+  filter: drop-shadow(0 4px 7px rgb(3 35 64 / 12%));
+  transform: rotate(var(--icon-rotate));
+  animation: icon-constellation-drift 8s ease-in-out infinite;
+  animation-delay: var(--icon-delay);
+}
+
+@keyframes icon-constellation-drift {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -6px;
+  }
+}
+
+/* Public hero — an editorial welcome with the school's student community */
 .hero {
   position: relative;
   isolation: isolate;
@@ -401,7 +452,7 @@ button {
 .hero__copy h1 {
   margin: 22px 0 18px;
   color: var(--ink);
-  font-family: "Amiri", var(--font-ar, serif);
+  font-family: var(--font-ar, sans-serif);
   font-size: clamp(2.8rem, 5vw, 5.15rem);
   font-weight: 400;
   line-height: 1.08;
@@ -460,49 +511,90 @@ button {
   --pointer-x: 0;
   --pointer-y: 0;
   position: relative;
-  min-height: clamp(460px, 48vw, 615px);
+  min-height: clamp(430px, 45vw, 590px);
   display: grid;
   place-items: end center;
+  padding: 18px 12px 12px;
   isolation: isolate;
 }
 .hero-scene__paper {
   position: absolute;
   z-index: -2;
-  inset: 9% 4% 4% 8%;
-  background: #ccebe4;
-  border-radius: 56% 44% 39% 61% / 45% 38% 62% 55%;
-  transform: rotate(-4deg);
+  inset: 10% 2% 5% 5%;
+  background: linear-gradient(145deg, #e8f5fb 0%, #d9edf7 58%, #fff1dc 100%);
+  border: 1px solid rgb(5 91 166 / 8%);
+  border-radius: 44% 56% 36% 64% / 40% 40% 60% 60%;
+  transform: rotate(-2deg);
 }
 .hero-scene__paper::after {
   position: absolute;
-  inset: 8% 10%;
-  border: 1px solid rgba(3, 35, 64, 0.08);
+  inset: 7% 8%;
+  border: 1px dashed rgb(5 91 166 / 16%);
   border-radius: inherit;
   content: "";
+}
+.hero-scene::before {
+  position: absolute;
+  z-index: -1;
+  top: 13%;
+  right: 13%;
+  width: min(68%, 330px);
+  aspect-ratio: 1;
+  border: 1px solid rgb(24 162 217 / 22%);
+  border-radius: 50%;
+  box-shadow: 0 0 0 18px rgb(255 255 255 / 32%);
+  content: "";
+  pointer-events: none;
 }
 .hero-scene__sun {
   position: absolute;
   z-index: -1;
   top: 3%;
-  right: 9%;
+  right: 40%;
   width: clamp(86px, 11vw, 138px);
   aspect-ratio: 1;
   border-radius: 50%;
   background: var(--gold);
 }
 .hero-scene__character {
-  position: relative;
+  position: absolute;
   z-index: 2;
+  bottom: 4%;
   width: auto;
-  height: clamp(380px, 43vw, 550px);
-  max-width: 82%;
+  height: clamp(310px, 34vw, 450px);
+  max-height: 84%;
+  max-width: 58%;
   object-fit: contain;
+  object-position: center bottom;
   transform: translate(
     calc(var(--pointer-x) * -8px),
     calc(var(--pointer-y) * -7px)
   );
   transition: transform 180ms ease-out;
   filter: drop-shadow(0 16px 16px rgba(3, 35, 64, 0.08));
+}
+.hero-scene__character--boy {
+  right: 12%;
+  left: auto;
+}
+.hero-scene__character--girl {
+  right: auto;
+  left: 12%;
+  height: clamp(320px, 36vw, 470px);
+}
+.hero-scene.is-visible .hero-scene__character--boy {
+  animation: hero-character-arrive 520ms var(--motion-ease) both;
+}
+.hero-scene.is-visible .hero-scene__character--girl {
+  animation: hero-character-arrive 520ms 130ms var(--motion-ease) both;
+}
+@keyframes hero-character-arrive {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .hero-scene__label {
   position: absolute;
@@ -525,14 +617,15 @@ button {
   color: var(--teal);
 }
 .hero-scene__label--top {
-  top: 20%;
-  left: 0;
+  top: 3%;
+  left: 1%;
   transform: rotate(-4deg)
     translate(calc(var(--pointer-x) * 9px), calc(var(--pointer-y) * 6px));
 }
 .hero-scene__label--bottom {
-  right: 0;
-  bottom: 17%;
+  top: 3%;
+  right: 1%;
+  bottom: auto;
   transform: rotate(3deg)
     translate(calc(var(--pointer-x) * -8px), calc(var(--pointer-y) * -5px));
 }
@@ -551,6 +644,9 @@ button {
   height: 58px;
   object-fit: contain;
   pointer-events: none;
+}
+.hero-scene .sticker {
+  z-index: 1;
 }
 .sticker--sun {
   top: 10%;
@@ -612,11 +708,14 @@ button {
 /* Editorial school story */
 .school-story {
   position: relative;
+  isolation: isolate;
   overflow: hidden;
   color: var(--paper-white);
   background: var(--ink);
 }
 .story__layout {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: 0.7fr 1.25fr 0.85fr;
   align-items: center;
@@ -650,6 +749,8 @@ button {
   width: 76%;
   height: 76%;
   object-fit: contain;
+  border-radius: 50%;
+  clip-path: circle(50%);
 }
 .story__copy h2 {
   color: var(--paper-white);
@@ -698,7 +799,7 @@ button {
   top: 0;
   right: 0;
   color: rgba(119, 217, 207, 0.17);
-  font-family: "Amiri", serif;
+  font-family: "Amiri School", var(--font-ar, sans-serif);
   font-size: clamp(7rem, 11vw, 12rem);
   line-height: 0.9;
 }
@@ -739,7 +840,14 @@ button {
 
 /* Feature explorer: one view, five real areas */
 .portal-tour {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   background: var(--paper-warm);
+}
+.portal-tour > .container {
+  position: relative;
+  z-index: 1;
 }
 .section-heading--split {
   display: grid;
@@ -925,9 +1033,29 @@ button {
 }
 .feature-preview__copy h3 {
   margin: 5px 0 3px;
-  font-family: "Amiri", serif;
+  font-family: var(--font-ar, sans-serif);
   font-size: 2rem;
   font-weight: 400;
+}
+.feature-preview__copy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px 16px;
+}
+.feature-preview__text {
+  min-width: 0;
+}
+.feature-preview__character {
+  width: clamp(62px, 8vw, 94px);
+  height: clamp(110px, 13vw, 150px);
+  display: block;
+  object-fit: contain;
+  object-position: center bottom;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 .feature-preview__copy p {
   max-width: 460px;
@@ -937,10 +1065,14 @@ button {
 
 /* Student journey */
 .journey {
+  position: relative;
+  isolation: isolate;
   overflow: hidden;
   background: var(--paper);
 }
 .journey__layout {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: minmax(0, 0.98fr) minmax(0, 1.02fr);
   align-items: center;
@@ -1027,7 +1159,7 @@ button {
   background: var(--paper);
   border: 1px solid #b6dcd5;
   border-radius: 50%;
-  font-family: "Amiri", serif;
+  font-family: var(--font-ar, sans-serif);
   font-size: 1.15rem;
 }
 .journey-list strong {
@@ -1044,8 +1176,13 @@ button {
 /* Stages are a path, not a row of cards */
 .stages-section {
   position: relative;
+  isolation: isolate;
   overflow: hidden;
   background: var(--paper-white);
+}
+.stages-section > .container {
+  position: relative;
+  z-index: 1;
 }
 .section-heading--center {
   max-width: 600px;
@@ -1073,6 +1210,25 @@ button {
   left: 8%;
   height: 1px;
   border-top: 1px dashed #a8d2ca;
+}
+.stage-heading__lockup {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(10px, 2vw, 24px);
+  margin: 8px auto 12px;
+}
+.stage-heading__lockup h2 {
+  margin: 0;
+}
+.stage-heading__character {
+  width: clamp(64px, 9vw, 104px);
+  height: clamp(118px, 15vw, 174px);
+  display: block;
+  flex: 0 0 auto;
+  object-fit: contain;
+  object-position: center bottom;
+  filter: drop-shadow(0 9px 12px rgb(5 55 96 / 12%));
 }
 .stage-entry {
   position: relative;
@@ -1123,7 +1279,7 @@ button {
 }
 .stage-entry h3 {
   margin: 0 0 6px;
-  font-family: "Amiri", serif;
+  font-family: var(--font-ar, sans-serif);
   font-size: 1.65rem;
   font-weight: 400;
 }
@@ -1235,7 +1391,7 @@ button {
 }
 .closing__copy h2 {
   margin: 18px 0 5px;
-  font-family: "Amiri", serif;
+  font-family: var(--font-ar, sans-serif);
   font-size: clamp(2.7rem, 5vw, 4.7rem);
   font-weight: 400;
   line-height: 1.1;
@@ -1244,6 +1400,24 @@ button {
   max-width: 470px;
   margin: 0 0 22px;
   color: #d7efea;
+}
+.closing__characters {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.closing__character {
+  width: clamp(76px, 8vw, 106px);
+  height: clamp(126px, 15vw, 176px);
+  display: block;
+  object-fit: contain;
+  object-position: center bottom;
+  filter: drop-shadow(0 8px 12px rgb(0 30 57 / 18%));
+}
+.closing__character--ball {
+  width: clamp(70px, 7vw, 92px);
+  height: clamp(118px, 13vw, 156px);
 }
 .closing__contact {
   display: grid;
@@ -1260,8 +1434,8 @@ button {
   height: 100px;
   object-fit: contain;
   padding: 5px;
-  background: var(--paper-white);
   border-radius: 50%;
+  clip-path: circle(50%);
 }
 .closing__contact span {
   grid-column: 2;
@@ -1313,7 +1487,8 @@ button {
   bottom: -150px;
   color: rgba(255, 255, 255, 0.055);
   font:
-    400 20rem/1 "Amiri",
+    400 20rem/1 "Amiri School",
+    var(--font-ar),
     serif;
   pointer-events: none;
 }
@@ -1324,21 +1499,28 @@ button {
 }
 .footer__inner {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px 24px;
+  gap: 14px clamp(18px, 3vw, 38px);
 }
 .footer__brand {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 9px;
   color: var(--paper-white);
   font-size: 0.77rem;
 }
+.footer__brand span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .footer__brand img {
   width: 35px;
   height: 35px;
   object-fit: contain;
+  border-radius: 50%;
+  clip-path: circle(50%);
 }
 .footer__inner p {
   margin: 0;
@@ -1355,21 +1537,75 @@ button {
 }
 .footer__inner small {
   grid-column: 1 / -1;
-  padding-top: 12px;
+  padding-top: 0;
   color: #879ca7;
-  border-top: 1px solid rgba(255, 255, 255, 0.13);
   font-size: 0.69rem;
   text-align: center;
+}
+.footer__developer {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px 16px;
+  padding-top: 12px;
+  color: #9fb3bd;
+  border-top: 1px solid rgba(255, 255, 255, 0.13);
+  font-size: 0.72rem;
+}
+.footer__developer strong {
+  margin-inline-start: 4px;
+  color: var(--paper-white);
+  font-weight: 700;
+}
+.footer__developer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #c8d6dc;
+  overflow-wrap: anywhere;
+}
+.footer__developer a:hover {
+  color: var(--gold-pale);
+}
+.footer__developer .lucide {
+  width: 15px;
+  height: 15px;
+  color: var(--mint);
+}
+
+@media (max-width: 880px) {
+  .footer__inner {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px 18px;
+  }
+  .footer__inner p {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    text-align: start;
+  }
+  .footer__top {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .footer__developer {
+    justify-content: center;
+  }
 }
 
 /* Login — student identity and actual sign-in only */
 .login-page {
+  position: relative;
+  isolation: isolate;
   min-height: 100vh;
   padding-bottom: 18px;
-  background: var(--paper-warm);
+  background:
+    radial-gradient(ellipse at 90% 12%, rgb(24 162 217 / 10%), transparent 34%),
+    linear-gradient(180deg, #f5f9fc 0%, #eef5f9 100%);
 }
 .login-header {
-  min-height: 84px;
+  min-height: 88px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1381,25 +1617,25 @@ button {
 }
 .login-layout {
   display: grid;
-  grid-template-columns: minmax(0, 0.93fr) minmax(0, 1.07fr);
-  align-items: stretch;
-  gap: clamp(25px, 5vw, 76px);
-  padding-block: 20px 45px;
+  grid-template-columns: minmax(0, 0.96fr) minmax(0, 1.04fr);
+  align-items: center;
+  gap: clamp(20px, 3.2vw, 48px);
+  padding-block: 20px 38px;
 }
 .login-card {
   align-self: center;
-  padding: clamp(27px, 5vw, 59px);
-  background: var(--paper-white);
-  border: 1px solid rgba(3, 35, 64, 0.06);
-  border-radius: 7px 32px 7px 7px;
-  box-shadow: var(--shadow-paper);
+  padding: clamp(27px, 4.2vw, 54px);
+  background: #fff;
+  border: 1px solid #dce9f0;
+  border-radius: 22px 6px 22px 22px;
+  box-shadow: 0 22px 60px rgb(5 55 96 / 9%);
 }
 .login-card > .section-index {
   color: var(--teal-deep);
 }
 .login-card h1 {
   margin: 14px 0 2px;
-  font-family: "Amiri", serif;
+  font-family: var(--font-ar, sans-serif);
   font-size: clamp(2.45rem, 4.3vw, 3.9rem);
   font-weight: 400;
   line-height: 1.15;
@@ -1426,18 +1662,18 @@ button {
   gap: 11px;
   padding-inline: 15px;
   color: var(--teal-deep);
-  background: #f6f7f2;
-  border: 1px solid #dfe7e1;
-  border-radius: 9px 9px 9px 20px;
+  background: #f5f9fc;
+  border: 1px solid #d8e5ed;
+  border-radius: 13px 5px 13px 13px;
   transition:
     border-color 180ms ease,
     box-shadow 180ms ease,
     background 180ms ease;
 }
 .input-shell:focus-within {
-  background: var(--paper-white);
+  background: #fff;
   border-color: var(--teal);
-  box-shadow: 0 0 0 4px rgba(23, 166, 151, 0.11);
+  box-shadow: 0 0 0 4px rgb(24 162 217 / 12%);
 }
 .input-shell.is-invalid {
   border-color: rgba(168, 66, 57, 0.7);
@@ -1500,10 +1736,18 @@ button {
   opacity: 0.8;
   cursor: wait;
 }
-.login-submit .lucide[data-login-spinner] {
+.login-submit__logo {
+  display: none;
+  width: 23px;
+  height: 23px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  border-radius: 50%;
+}
+.login-submit.is-loading .login-submit__icon {
   display: none;
 }
-.login-submit.is-loading .lucide[data-login-spinner] {
+.login-submit.is-loading .login-submit__logo {
   display: block;
   animation: spin 1s linear infinite;
 }
@@ -1513,7 +1757,7 @@ button {
   }
 }
 .form-feedback {
-  min-height: 28px;
+  min-height: 32px;
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 0.79rem;
@@ -1556,14 +1800,21 @@ button {
   --pointer-x: 0;
   --pointer-y: 0;
   position: relative;
-  min-height: 570px;
+  align-self: stretch;
+  min-height: clamp(440px, 42vw, 550px);
+  height: auto;
   display: flex;
   align-items: flex-start;
   justify-content: center;
   overflow: hidden;
   isolation: isolate;
-  background: #d9eee9;
-  border-radius: 52% 48% 9px 9px / 16% 16% 9px 9px;
+  background:
+    radial-gradient(circle at 79% 19%, rgb(242 140 15 / 22%), transparent 22%),
+    radial-gradient(circle at 18% 80%, rgb(24 162 217 / 25%), transparent 31%),
+    linear-gradient(145deg, #0871bd 0%, #055ba6 56%, #03477f 100%);
+  border: 1px solid rgb(255 255 255 / 44%);
+  border-radius: 28px 7px 28px 28px;
+  box-shadow: 0 22px 55px rgb(5 55 96 / 16%);
 }
 .login-scene__orbit {
   position: absolute;
@@ -1572,14 +1823,14 @@ button {
   left: 10%;
   width: 75%;
   aspect-ratio: 1;
-  border: 1px solid rgba(3, 35, 64, 0.13);
+  border: 1px solid rgb(255 255 255 / 29%);
   border-radius: 50%;
 }
 .login-scene__orbit::before,
 .login-scene__orbit::after {
   position: absolute;
   inset: 9%;
-  border: 1px dashed rgba(3, 35, 64, 0.12);
+  border: 1px dashed rgb(255 255 255 / 22%);
   border-radius: 50%;
   content: "";
 }
@@ -1596,9 +1847,11 @@ button {
   align-items: center;
   gap: 8px;
   padding: 9px 12px;
-  color: var(--ink);
-  background: var(--paper-white);
-  border-radius: 8px 14px 14px 14px;
+  color: var(--teal-deep);
+  background: #fff;
+  border: 1px solid rgb(255 255 255 / 75%);
+  border-radius: 12px 5px 12px 12px;
+  box-shadow: 0 10px 25px rgb(0 31 59 / 16%);
   font-size: 0.75rem;
   font-weight: 700;
   transform: rotate(3deg);
@@ -1606,15 +1859,16 @@ button {
 .login-scene__tag .lucide {
   width: 17px;
   height: 17px;
-  color: var(--teal);
+  color: var(--gold);
 }
 .login-scene__girl {
-  position: relative;
+  position: absolute;
   z-index: 2;
+  right: 22%;
+  bottom: 0;
   width: auto;
-  height: min(445px, 75%);
-  max-width: 75%;
-  margin-top: 70px;
+  height: clamp(300px, 34vw, 430px);
+  max-width: 46%;
   object-fit: contain;
   transform: translate(
     calc(var(--pointer-x) * -6px),
@@ -1622,20 +1876,18 @@ button {
   );
   transition: transform 180ms ease-out;
 }
-.login-scene__school {
+.login-scene__boy {
   position: absolute;
-  z-index: 1;
-  right: 3%;
-  bottom: 5%;
-  width: clamp(94px, 20%, 140px);
-  height: auto;
-  max-height: 52%;
+  z-index: 2;
+  bottom: 0;
+  left: 7%;
+  width: auto;
+  height: clamp(300px, 34vw, 430px);
+  max-width: 46%;
   object-fit: contain;
-  object-position: center;
-  background: var(--paper-white);
-  border: 1px solid rgba(5, 91, 166, 0.15);
-  border-radius: 12px;
-  box-shadow: 0 10px 25px rgba(3, 35, 64, 0.16);
+  object-position: center bottom;
+  filter: drop-shadow(0 12px 18px rgb(5 55 96 / 12%));
+  animation: sticker-drift 7.5s ease-in-out -1s infinite;
 }
 .sticker--login {
   top: 40%;
@@ -1734,10 +1986,25 @@ button {
     grid-template-columns: minmax(0, 1fr) minmax(300px, 0.8fr);
   }
   .hero-scene {
-    min-height: 465px;
+    min-height: 430px;
   }
   .hero-scene__character {
-    height: 420px;
+    height: clamp(280px, 40vw, 390px);
+    max-height: 84%;
+    max-width: 58%;
+  }
+  .hero-scene__character--girl {
+    height: clamp(290px, 42vw, 410px);
+  }
+  .login-scene__girl,
+  .login-scene__boy {
+    bottom: 0;
+    height: clamp(280px, 40vw, 390px);
+    max-height: 86%;
+  }
+  .login-scene__boy {
+    left: 5%;
+    max-width: 42%;
   }
   .story__layout {
     grid-template-columns: 0.4fr 1.15fr;
@@ -1837,16 +2104,25 @@ button {
     margin-top: 22px;
   }
   .hero-scene {
-    min-height: 360px;
+    min-height: 330px;
     width: min(100%, 510px);
     margin-inline: auto;
   }
   .hero-scene__character {
-    height: 340px;
-    max-width: 76%;
+    height: clamp(185px, 57vw, 245px);
+    max-height: 78%;
+    max-width: 58%;
+  }
+  .hero-scene__character--girl {
+    height: clamp(195px, 60vw, 255px);
   }
   .hero-scene__paper {
-    inset: 7% 5% 4%;
+    inset: 9% 4% 5%;
+  }
+  .hero-scene::before {
+    top: 12%;
+    right: 17%;
+    width: 65%;
   }
   .hero-scene__sun {
     width: 76px;
@@ -1857,12 +2133,13 @@ button {
     font-size: 0.67rem;
   }
   .hero-scene__label--top {
-    top: 18%;
-    left: -1%;
+    top: 4%;
+    left: 0;
   }
   .hero-scene__label--bottom {
-    right: -1%;
-    bottom: 15%;
+    top: 4%;
+    right: 0;
+    bottom: auto;
   }
   .scene-caption {
     right: 8%;
@@ -1999,6 +2276,13 @@ button {
   .feature-preview__copy h3 {
     font-size: 1.7rem;
   }
+  .feature-preview__copy {
+    gap: 8px;
+  }
+  .feature-preview__character {
+    width: 58px;
+    height: 102px;
+  }
   .feature-preview__copy p {
     font-size: 0.81rem;
   }
@@ -2039,6 +2323,13 @@ button {
   }
   .section-heading--center h2 {
     font-size: clamp(2.7rem, 11vw, 3.8rem);
+  }
+  .stage-heading__lockup {
+    gap: 8px;
+  }
+  .stage-heading__character {
+    width: 56px;
+    height: 108px;
   }
   .section-heading--center > p {
     font-size: 0.82rem;
@@ -2093,6 +2384,17 @@ button {
   .closing__copy h2 {
     font-size: 3.2rem;
   }
+  .closing__characters {
+    margin-top: 8px;
+  }
+  .closing__character {
+    width: 74px;
+    height: 122px;
+  }
+  .closing__character--ball {
+    width: 66px;
+    height: 110px;
+  }
   .closing__contact {
     width: 100%;
     grid-template-columns: 72px 1fr;
@@ -2131,12 +2433,19 @@ button {
   }
   .footer__inner small {
     grid-column: 1 / -1;
+    grid-row: 4;
+  }
+  .footer__developer {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    text-align: center;
   }
   .login-header {
     min-height: 69px;
   }
   .login-layout {
     grid-template-columns: 1fr;
+    align-items: start;
     gap: 22px;
     padding-top: 9px;
   }
@@ -2150,19 +2459,21 @@ button {
   }
   .login-scene {
     grid-row: 2;
-    min-height: 340px;
-    border-radius: 45% 45% 8px 8px / 18% 18% 8px 8px;
+    min-height: 290px;
+    height: 290px;
+    border-radius: 22px 6px 22px 22px;
   }
   .login-scene__girl {
-    height: 290px;
-    max-width: 69%;
-    margin-top: 25px;
+    right: 21%;
+    bottom: 0;
+    height: clamp(230px, 64vw, 270px);
+    max-width: 48%;
   }
-  .login-scene__school {
-    right: 3%;
-    bottom: 4%;
-    width: 76px;
-    max-height: 45%;
+  .login-scene__boy {
+    left: 4%;
+    bottom: 0;
+    height: clamp(230px, 64vw, 270px);
+    max-width: 40%;
   }
   .login-scene__tag {
     top: 9%;
@@ -2172,6 +2483,9 @@ button {
   .login-scene__orbit {
     top: 7%;
     width: 82%;
+  }
+  .login-scene__tag {
+    z-index: 4;
   }
   .sticker--login {
     top: 34%;
@@ -2205,10 +2519,15 @@ button {
     font-size: 2.45rem;
   }
   .hero-scene {
-    min-height: 320px;
+    min-height: 300px;
   }
   .hero-scene__character {
-    height: 305px;
+    height: clamp(175px, 58vw, 195px);
+    max-height: 78%;
+    max-width: 58%;
+  }
+  .hero-scene__character--girl {
+    height: clamp(185px, 61vw, 205px);
   }
   .hero-scene__label {
     font-size: 0.61rem;

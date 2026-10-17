@@ -93,3 +93,28 @@ export const studentFloatingIcons = Object.freeze({
   achievement: "assets/icons/i23.png",
   contact: "assets/icons/i25.png",
 });
+
+export const schoolIconConstellations = Object.freeze({
+  school: ["i2.png", "i5.png", "i6.png", "i7.png", "i8.png"].map(
+    (icon) => `assets/icons/${icon}`,
+  ),
+  portal: ["i9.png", "i11.png", "i12.png", "i13.png", "i14.png"].map(
+    (icon) => `assets/icons/${icon}`,
+  ),
+  journey: [
+    "i15.png",
+    "i17.png",
+    "i18.png",
+    "i19.png",
+    "i22.png",
+    "i24.png",
+  ].map((icon) => `assets/icons/${icon}`),
+  stages: [
+    "i26.png",
+    "i27.png",
+    "i28.png",
+    "i30.png",
+    "i31.png",
+    "i32.png",
+  ].map((icon) => `assets/icons/${icon}`),
+});

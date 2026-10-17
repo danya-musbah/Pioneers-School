@@ -26,17 +26,21 @@ export function normalizeStudentGender(value) {
 }
 
 export const studentPortraitFallbacks = Object.freeze({
-  male: pose("first-grade-boy", "stand"),
-  female: pose("short-haired-girl", "stand"),
+  male: pose("boy-with-sign", "hold-sign-look-right"),
+  female: pose("side-swept-haired-girl", "hold-sign-look-left"),
   unknown: characterGroupArtwork[0],
 });
 
 export const studentArtwork = Object.freeze({
-  loginBackground: "assets/images/login background.png",
-  schoolyardScene: characterGroupArtwork[1],
+  schoolyardScene: characterGroupArtwork[0],
   neutralPortrait: characterGroupArtwork[0],
   heroCompanion: pose("curly-haired-boy", "wave"),
   home: Object.freeze({
+    communityScene: characterGroupArtwork[0],
+    communityFigures: Object.freeze([
+      pose("first-grade-boy", "stand"),
+      pose("short-haired-girl", "stand"),
+    ]),
     schedule: Object.freeze({
       active: pose("curly-haired-boy", "look-right"),
       empty: pose("shy-young-girl", "look-down-right"),
@@ -70,8 +74,10 @@ export const studentArtwork = Object.freeze({
 });
 
 const usageBySource = new Map([
-  [studentArtwork.loginBackground, "خلفية مشهد تسجيل الدخول"],
-  [studentArtwork.schoolyardScene, "مشهد رحلة التعلّم في الصفحة العامة"],
+  [
+    studentArtwork.schoolyardScene,
+    "مشهد رحلة التعلّم في الصفحة العامة ومجتمع بوابة الطالب",
+  ],
   [
     studentArtwork.neutralPortrait,
     "بديل محايد عند غياب الجنس أو عدم التعرف عليه",
@@ -82,6 +88,8 @@ const usageBySource = new Map([
     "الصورة الافتراضية لحساب طالبة gender=female",
   ],
   [studentArtwork.heroCompanion, "رفيق زخرفي في مساحة الترحيب، لا يمثل الطالب"],
+  [studentArtwork.home.communityFigures[0], "شخصية ولد في شارة مجتمع الطالب"],
+  [studentArtwork.home.communityFigures[1], "شخصية بنت في شارة مجتمع الطالب"],
   [studentArtwork.home.schedule.active, "حالة وجود حصص في ملخص اليوم"],
   [
     studentArtwork.home.schedule.empty,
@@ -112,20 +120,8 @@ export const studentArtworkInventory = Object.freeze([
   ),
   {
     path: characterGroupArtwork[0],
-    type: "مجموعة شخصيات بخلفية شفافة",
-    usage: usageBySource.get(characterGroupArtwork[0]),
-    transparentBackground: true,
-  },
-  {
-    path: characterGroupArtwork[1],
     type: "مشهد مدرسي جماعي بخلفية",
-    usage: usageBySource.get(characterGroupArtwork[1]),
-    transparentBackground: false,
-  },
-  {
-    path: studentArtwork.loginBackground,
-    type: "ملصق/خلفية مدرسية طولية",
-    usage: usageBySource.get(studentArtwork.loginBackground),
+    usage: usageBySource.get(characterGroupArtwork[0]),
     transparentBackground: false,
   },
 ]);
