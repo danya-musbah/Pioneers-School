@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const MAX_TARGETS = 50;
 const allowedDevelopmentOrigins = [
+  "http://localhost:8000",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
   "http://localhost:3030",
