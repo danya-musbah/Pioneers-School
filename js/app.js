@@ -3,8 +3,15 @@ import {
   publicSections,
   localPageCards,
   decorativeStickers,
+  studentFloatingIcons,
 } from "./data.js";
 import { getSupabaseClient, hasSupabaseConfig } from "./supabase-client.js";
+import {
+  normalizeStudentGender,
+  studentArtwork,
+  studentArtworkInventory,
+  studentPortraitFallbacks,
+} from "./student-artwork.js";
 
 const app = document.getElementById("app");
 const state = {
@@ -85,7 +92,7 @@ const faqItems = [
   },
   {
     question: "كيف أستعيد الوصول إلى الحساب؟",
-    answer: `تواصل مع إدارة المدرسة عبر ${schoolProfile.phone} أو ${schoolProfile.email} للتحقق من الحساب وإعادة تعيين بياناته.`,
+    answer: `للمساعدة في استعادة الوصول، راسل المدرسة عبر واتساب أو اتصل على ${schoolProfile.phone} أو أرسل بريدًا إلى ${schoolProfile.email}.`,
   },
 ];
 
@@ -108,6 +115,45 @@ function formatAmount(amount) {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   })} د.ل`;
+}
+
+function normalizeWhatsAppPhone(phone, countryCode) {
+  const callingCode = String(countryCode ?? "").replace(/\D/g, "");
+  let number = String(phone ?? "").replace(/\D/g, "");
+  if (!callingCode || !number) return null;
+  if (number.startsWith("00")) number = number.slice(2);
+  if (!number.startsWith(callingCode)) {
+    number = number.replace(/^0+/, "");
+    number = `${callingCode}${number}`;
+  }
+  return number.length >= 8 && number.length <= 15 ? number : null;
+}
+
+function schoolWhatsAppUrl(context = "أحد الأمور المدرسية") {
+  const phone = normalizeWhatsAppPhone(
+    schoolProfile.phone,
+    schoolProfile.phoneCountryCode,
+  );
+  if (!phone) return null;
+  const message = `السلام عليكم، أود التواصل مع مدرسة رواد العلم الأولى بخصوص ${context}.`;
+  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+}
+
+function renderWhatsAppLink(
+  label,
+  context,
+  className = "whatsapp-link",
+  artwork = null,
+) {
+  const href = schoolWhatsAppUrl(context);
+  const icon = '<i data-lucide="message-circle" aria-hidden="true"></i>';
+  const motif = artwork
+    ? studentFloatingIcon(artwork, "whatsapp-link__art")
+    : "";
+  if (!href) {
+    return `<span class="${className} is-unavailable" aria-disabled="true">${icon}<span>رقم التواصل غير مهيأ</span></span>`;
+  }
+  return `<a class="${className}" href="${href}" target="_blank" rel="noopener noreferrer">${icon}<span>${escapeHTML(label)}</span><i class="whatsapp-link__arrow" data-lucide="arrow-up-left" aria-hidden="true"></i>${motif}</a>`;
 }
 
 function mapPortalData(data) {
@@ -191,11 +237,71 @@ async function loadStudentPortal(client) {
     throw new Error("student_session_unavailable");
   }
 
-  const { data, error } = await client.rpc("student_portal_data");
+  const [portalResult, identityResult] = await Promise.all([
+    client.rpc("student_portal_data"),
+    client
+      .rpc("student_portal_identity")
+      .catch((error) => ({ data: null, error })),
+  ]);
+  const { data, error } = portalResult;
   if (error || !data?.student?.id) {
     throw new Error("student_data_unavailable");
   }
-  return mapPortalData(data);
+  const student = mapPortalData(data);
+  const identity = identityResult.error ? null : identityResult.data?.student;
+  student.gender = normalizeStudentGender(identity?.gender);
+  student.photoUrl = identity
+    ? [identity.avatar_path, identity.photo_path]
+        .map(safeStudentPhotoUrl)
+        .find(Boolean) || null
+    : null;
+  student.hasPhotoReference = Boolean(
+    identity &&
+    [
+      identity.avatar_storage_path,
+      identity.photo_storage_path,
+      identity.avatar_path,
+      identity.photo_path,
+    ].some((value) => typeof value === "string" && value.trim()),
+  );
+  return student;
+}
+
+function safeStudentPhotoUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const candidate = value.trim();
+  if (!/^https?:\/\//i.test(candidate)) return null;
+  try {
+    const url = new URL(candidate);
+    if (url.protocol === "https:") return url.href;
+    if (url.origin === window.location.origin) return url.href;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function hydrateStudentPhoto(client, student) {
+  if (!student?.hasPhotoReference) return;
+  try {
+    const { data, error } = await client.functions.invoke("student-avatar");
+    const signedUrl = error ? null : safeStudentPhotoUrl(data?.image_url);
+    if (!signedUrl || state.student !== student) return;
+    student.photoUrl = signedUrl;
+    app.querySelectorAll("[data-student-portrait]").forEach((image) => {
+      image.dataset.fallbackApplied = "false";
+      image
+        .closest(".student-photo-frame")
+        ?.classList.remove("is-image-unavailable");
+      image
+        .closest(".student-photo-frame")
+        ?.setAttribute("data-avatar-kind", "personal");
+      image.alt = "الصورة الشخصية للطالب";
+      image.src = signedUrl;
+    });
+  } catch {
+    // Keep the local gender-specific portrait when signing is unavailable.
+  }
 }
 
 function setLoginFieldState(field, isError) {
@@ -308,6 +414,7 @@ async function restoreSession() {
     state.loggedIn = true;
     state.page = "student";
     renderApp();
+    void hydrateStudentPhoto(client, state.student);
   } catch {
     // Preserve cached auth during temporary network or RPC outages, but never show an unvalidated portal.
     state.student = null;
@@ -317,6 +424,8 @@ async function restoreSession() {
 }
 
 function bindGlobalEvents() {
+  document.addEventListener("error", handleStudentPortraitError, true);
+
   document.addEventListener("click", (event) => {
     const navToggle = event.target.closest("[data-nav-toggle]");
     if (navToggle) {
@@ -510,6 +619,7 @@ async function submitLogin(form) {
     state.activePanel = "home";
     state.page = "student";
     renderApp();
+    void hydrateStudentPhoto(client, state.student);
   } catch {
     try {
       await client?.auth.signOut({ scope: "local" });
@@ -702,7 +812,7 @@ function renderPublicLanding() {
           <div class="container journey__layout">
             <div class="journey__art" data-reveal>
               <div class="journey__frame"></div>
-              <img src="assets/images/Cheerful-Schoolyard-Friends-With-Background.png" alt="مجموعة من الطلاب بزي المدرسة يتشاركون التعلّم" loading="lazy" />
+              <img src="${studentArtwork.schoolyardScene}" alt="مجموعة من الطلاب بزي المدرسة يتشاركون التعلّم" loading="lazy" />
               <img class="sticker sticker--journey" src="${decorativeStickers[3]}" alt="" aria-hidden="true" />
               <span class="journey__caption">معًا في طريق المعرفة</span>
             </div>
@@ -750,7 +860,7 @@ function renderPublicLanding() {
               <span class="section-index">05 <span></span> المساعدة</span>
               <h2 id="faq-title">أسئلة<br /><em>تتكرر.</em></h2>
               <p>لم تجد ما تبحث عنه؟ تواصل مباشرة مع المدرسة.</p>
-              <a class="text-link" href="mailto:${schoolProfile.email}">راسل المدرسة <i data-lucide="arrow-up-left"></i></a>
+              ${renderWhatsAppLink("اسأل المدرسة عبر واتساب", "استفسار عام", "whatsapp-link whatsapp-link--section", studentFloatingIcons.contact)}
             </div>
             <div class="faq-list" data-reveal>
               ${faqItems
@@ -778,6 +888,7 @@ function renderPublicLanding() {
             <div class="closing__contact" data-reveal>
               <img src="assets/logo.png" alt="شعار المدرسة" loading="lazy" />
               <span>${schoolProfile.address}</span>
+              ${renderWhatsAppLink("ابدأ محادثة واتساب", "استفسار عام", "whatsapp-link whatsapp-link--closing", studentFloatingIcons.contact)}
               <a href="tel:${schoolProfile.phone.replace(/[^0-9+]/g, "")}"><i data-lucide="phone"></i>${schoolProfile.phone}</a>
               <a href="mailto:${schoolProfile.email}"><i data-lucide="mail"></i>${schoolProfile.email}</a>
               <a href="${schoolProfile.mapUrl}" target="_blank" rel="noreferrer"><i data-lucide="map-pin"></i>موقع المدرسة</a>
@@ -823,13 +934,13 @@ function renderLoginPage() {
             <button class="button button--primary login-submit" type="submit"><i data-lucide="log-in" data-login-spinner></i><span data-login-label>دخول آمن</span></button>
             <p class="form-feedback" data-state="info" role="status" aria-live="polite">تُحمّل بيانات الطالب بعد التحقق من الحساب.</p>
           </form>
-          <div class="login-support"><span>تحتاج مساعدة؟</span><a href="mailto:${schoolProfile.email}">تواصل مع إدارة المدرسة</a></div>
+          <div class="login-support"><span>تحتاج مساعدة؟</span>${renderWhatsAppLink("تواصل مع المدرسة عبر واتساب", "المساعدة في الدخول إلى البوابة", "whatsapp-link whatsapp-link--login", studentFloatingIcons.contact)}</div>
         </section>
         <aside class="login-scene" data-parallax-scene data-reveal aria-label="طالبة من مدرسة رواد العلم">
           <div class="login-scene__orbit"></div>
           <span class="login-scene__tag"><i data-lucide="book-open-check"></i> التعلّم يفتح الأبواب</span>
           <img class="login-scene__girl" src="assets/images/Schoolgirl-Standing-Holding-Sign-Looking-Left.png" alt="طالبة تحمل كتابًا وترتدي الزي المدرسي" />
-          <img class="login-scene__school" src="assets/images/login background.png" alt="مبنى مدرسة رواد العلم الأولى" loading="lazy" />
+          <img class="login-scene__school" src="${studentArtwork.loginBackground}" alt="مبنى مدرسة رواد العلم الأولى" loading="lazy" />
           <img class="sticker sticker--login" src="${decorativeStickers[4]}" alt="" aria-hidden="true" />
         </aside>
       </div>
@@ -838,8 +949,26 @@ function renderLoginPage() {
   `;
 }
 
-function emptyState(icon, title, description) {
-  return `<div class="empty-state"><span class="empty-state__icon"><i data-lucide="${icon}"></i></span><div><strong>${title}</strong><p>${description}</p></div></div>`;
+const studentArtworkPaths = new Set(
+  studentArtworkInventory.map((asset) => asset.path),
+);
+const floatingIconPaths = new Set(Object.values(studentFloatingIcons));
+
+function studentArtworkImage(source, className, loading = "lazy") {
+  if (!studentArtworkPaths.has(source)) return "";
+  return `<img class="${className}" src="${escapeHTML(source)}" alt="" aria-hidden="true" loading="${loading}" decoding="async" />`;
+}
+
+function studentFloatingIcon(source, className, loading = "lazy") {
+  if (!floatingIconPaths.has(source)) return "";
+  return `<img class="${className}" src="${escapeHTML(source)}" alt="" aria-hidden="true" loading="${loading}" decoding="async" />`;
+}
+
+function emptyState(icon, title, description, illustration = null) {
+  const visual = illustration
+    ? studentArtworkImage(illustration, "empty-state__art")
+    : `<span class="empty-state__icon"><i data-lucide="${icon}"></i></span>`;
+  return `<div class="empty-state ${illustration ? "empty-state--illustrated" : ""}">${visual}<div><strong>${title}</strong><p>${description}</p></div></div>`;
 }
 
 function greetingForNow() {
@@ -853,6 +982,71 @@ function greetingForNow() {
 function studentAvatar(student, className = "student-avatar") {
   const initial = student.name.trim().slice(0, 1) || "ط";
   return `<span class="${className}" aria-hidden="true"><span>${initial}</span><i data-lucide="sparkles"></i></span>`;
+}
+
+function studentPortraitMarkup(student, placement, loading = "lazy") {
+  const gender = normalizeStudentGender(student.gender);
+  const fallback =
+    studentPortraitFallbacks[gender] || studentPortraitFallbacks.unknown;
+  const photoUrl = safeStudentPhotoUrl(student.photoUrl);
+  const hasPersonalPhoto = Boolean(photoUrl);
+  const alt = hasPersonalPhoto
+    ? "الصورة الشخصية للطالب"
+    : gender === "unknown"
+      ? "مجموعة محايدة من طلاب المدرسة"
+      : "رسم افتراضي للطالب";
+  const fallbackAlt =
+    gender === "unknown"
+      ? "مجموعة محايدة من طلاب المدرسة"
+      : "رسم افتراضي للطالب";
+  const initial = student.name.trim().slice(0, 1) || "ط";
+  const source = photoUrl || fallback;
+
+  return `
+    <figure class="student-photo-frame student-photo-frame--${placement}" data-avatar-kind="${hasPersonalPhoto ? "personal" : gender}" data-fallback-initial="${escapeHTML(initial)}">
+      <img class="student-photo-frame__image" src="${escapeHTML(source)}" alt="${alt}" loading="${loading}" decoding="async" data-student-portrait data-fallback-src="${escapeHTML(fallback)}" data-fallback-alt="${fallbackAlt}" data-fallback-applied="${hasPersonalPhoto ? "false" : "true"}" />
+    </figure>
+  `;
+}
+
+function renderStudyPageHeading(
+  eyebrow,
+  title,
+  description,
+  illustration,
+  floatingIcon,
+) {
+  return `
+    <header class="study-page__heading" data-reveal>
+      ${floatingIcon ? studentFloatingIcon(floatingIcon, "study-page__floating-icon") : ""}
+      <div class="study-page__heading-copy">
+        <span class="study-page__eyebrow">${eyebrow}</span>
+        <h2 id="portal-page-title">${title}</h2>
+        <p>${description}</p>
+      </div>
+      ${illustration ? studentArtworkImage(illustration, "study-page__illustration") : ""}
+    </header>
+  `;
+}
+
+function handleStudentPortraitError(event) {
+  const image = event.target;
+  if (
+    !(image instanceof HTMLImageElement) ||
+    !image.matches("[data-student-portrait]")
+  )
+    return;
+  const fallback = image.dataset.fallbackSrc;
+  if (image.dataset.fallbackApplied !== "true" && fallback) {
+    image.dataset.fallbackApplied = "true";
+    image.alt = image.dataset.fallbackAlt || "رسم افتراضي للطالب";
+    image
+      .closest(".student-photo-frame")
+      ?.setAttribute("data-avatar-kind", "fallback");
+    image.src = fallback;
+    return;
+  }
+  image.closest(".student-photo-frame")?.classList.add("is-image-unavailable");
 }
 
 function renderProgress(value, label) {
@@ -882,6 +1076,10 @@ function renderPortalHome(student) {
   return `
     <section class="portal-home" aria-label="مساحة الطالب">
       <article class="student-hero" data-reveal>
+        <div class="student-hero__float-field" aria-hidden="true">
+          ${studentFloatingIcon(studentFloatingIcons.welcome, "student-floating-icon student-floating-icon--hero", "eager")}
+          ${studentFloatingIcon(studentFloatingIcons.schedule, "student-floating-icon student-floating-icon--route", "eager")}
+        </div>
         <div class="student-hero__copy">
           <span class="student-hero__eyebrow"><i data-lucide="sparkles"></i> مساحتك، على طريقتك</span>
           <p class="student-hero__greeting">${greetingForNow()}</p>
@@ -893,13 +1091,13 @@ function renderPortalHome(student) {
           </div>
           <button class="hero-profile-link" type="button" data-target="page:profile">اكتشف ملفك الدراسي <i data-lucide="arrow-up-left"></i></button>
         </div>
-        <div class="student-hero__portrait" aria-hidden="true">
+        <div class="student-hero__portrait">
           <span class="hero-orbit hero-orbit--one" aria-hidden="true"></span>
           <span class="hero-orbit hero-orbit--two" aria-hidden="true"></span>
-          ${studentAvatar(student, "student-avatar student-avatar--hero")}
+          ${studentPortraitMarkup(student, "hero", "eager")}
+          ${studentArtworkImage(studentArtwork.heroCompanion, "student-hero__companion")}
           <span class="hero-planet hero-planet--blue" aria-hidden="true"></span>
           <span class="hero-planet hero-planet--orange" aria-hidden="true"></span>
-          <span class="hero-portrait-caption"><i data-lucide="book-open-check"></i> رحلتك تتقدّم</span>
         </div>
       </article>
 
@@ -925,7 +1123,7 @@ function renderPortalHome(student) {
         </article>
 
         <article class="day-path" data-reveal>
-          <header class="feature-heading"><div><span class="feature-kicker">خطوات يومك</span><h2>موعد التعلّم</h2></div><i data-lucide="calendar-days"></i></header>
+          <header class="feature-heading"><div><span class="feature-kicker">خطوات يومك</span><h2>موعد التعلّم</h2></div>${student.todayAgenda.length ? studentArtworkImage(studentArtwork.home.schedule.active, "feature-heading__art") : ""}<i data-lucide="calendar-days"></i></header>
           ${
             student.todayAgenda.length
               ? `<ol class="day-path__list">${student.todayAgenda.map((entry, index) => `<li style="--path-index:${Math.min(index, 5)}"><span class="day-path__marker">${String(index + 1).toLocaleString("ar-LY", { minimumIntegerDigits: 2 })}</span><time>${entry.time}</time><div><strong>${entry.subject}</strong>${entry.teacher || entry.room ? `<small>${[entry.teacher, entry.room].filter(Boolean).join(" · ")}</small>` : ""}</div></li>`).join("")}</ol>`
@@ -933,13 +1131,14 @@ function renderPortalHome(student) {
                   "calendar-clock",
                   "لا توجد حصص منشورة لهذا اليوم",
                   "عندما يُنشر جدول الصف ستظهر مواعيدك هنا.",
+                  studentArtwork.home.schedule.empty,
                 )
           }
           <button class="section-jump" type="button" data-target="page:timetable">استكشف الأسبوع الدراسي <i data-lucide="arrow-up-left"></i></button>
         </article>
 
         <article class="results-feature" data-reveal>
-          <header class="feature-heading"><div><span class="feature-kicker">ثمرة اجتهادك</span><h2>نتائج معتمدة</h2></div><span class="feature-heading__count">${student.results.length.toLocaleString("ar-LY")} ${student.results.length === 1 ? "مادة" : "مواد"}</span></header>
+          <header class="feature-heading"><div><span class="feature-kicker">ثمرة اجتهادك</span><h2>نتائج معتمدة</h2></div>${student.results.length ? studentArtworkImage(studentArtwork.home.results.active, "feature-heading__art") : ""}<span class="feature-heading__count">${student.results.length.toLocaleString("ar-LY")} ${student.results.length === 1 ? "مادة" : "مواد"}</span></header>
           ${
             student.results.length
               ? `<ul class="subject-trail">${student.results
@@ -953,13 +1152,14 @@ function renderPortalHome(student) {
                   "chart-no-axes-column-increasing",
                   "لا توجد نتائج معتمدة الآن",
                   "ستجد نتيجتك هنا بعد اعتمادها من المدرسة.",
+                  studentArtwork.home.results.empty,
                 )
           }
           <button class="section-jump" type="button" data-target="page:results">كل النتائج <i data-lucide="arrow-up-left"></i></button>
         </article>
 
         <article class="fees-feature" data-reveal>
-          <div class="fees-feature__heading"><span class="fees-feature__icon"><i data-lucide="wallet-cards"></i></span><div><span class="feature-kicker">متابعة القيد</span><h2>الرسوم الدراسية</h2></div></div>
+          <div class="fees-feature__heading"><span class="fees-feature__icon"><i data-lucide="wallet-cards"></i></span><div><span class="feature-kicker">متابعة القيد</span><h2>الرسوم الدراسية</h2></div>${student.feeRecords.length ? studentArtworkImage(studentArtwork.home.fees.active, "fees-feature__art") : ""}</div>
           ${
             student.feeRecords.length
               ? `<div class="fees-total"><span>المتبقي على البنود المسجلة</span><strong>${formatAmount(feeTotals.remaining)}</strong></div>${renderProgress(feeProgress, "نسبة المبالغ المسددة من إجمالي الرسوم المسجلة")}<div class="fees-feature__meta"><span>المدفوع ${formatAmount(feeTotals.paid)}</span><span>الإجمالي ${formatAmount(feeTotals.total)}</span></div>`
@@ -967,6 +1167,7 @@ function renderPortalHome(student) {
                   "wallet",
                   "لا توجد رسوم مرتبطة بالقيد",
                   "لا توجد بنود مالية مسجلة لعرضها الآن.",
+                  studentArtwork.home.fees.empty,
                 )
           }
           <button class="section-jump" type="button" data-target="page:fees">عرض تفاصيل الرسوم <i data-lucide="arrow-up-left"></i></button>
@@ -986,9 +1187,9 @@ function renderPortalPageMarkup(page, student) {
     ].filter(([, value]) => value && value !== "—");
     return `
       <section class="portal-page study-page" aria-labelledby="portal-page-title">
-        <header class="study-page__heading" data-reveal><span class="study-page__eyebrow">هويتك في المدرسة</span><h2 id="portal-page-title">ملفي الدراسي</h2><p>مساحتك التعريفية كما سُجّلت في القيد الدراسي.</p></header>
+        ${renderStudyPageHeading("هويتك في المدرسة", "ملفي الدراسي", "مساحتك التعريفية كما سُجّلت في القيد الدراسي.", studentArtwork.pages.profile, studentFloatingIcons.welcome)}
         <article class="profile-story" data-reveal>
-          <div class="profile-story__identity">${studentAvatar(student, "student-avatar student-avatar--profile")}<div><span>الاسم المسجل</span><h3>${student.name}</h3><p>${student.studentNumber ? `رقم الطالب ${student.studentNumber}` : ""}</p></div></div>
+          <div class="profile-story__identity">${studentPortraitMarkup(student, "profile")}<div><span>الاسم المسجل</span><h3>${student.name}</h3><p>${student.studentNumber ? `رقم الطالب ${student.studentNumber}` : ""}</p></div></div>
           <div class="profile-story__seal" aria-hidden="true"><i data-lucide="school"></i><span>رواد العلم</span></div>
           ${details.length ? `<dl class="profile-story__details">${details.map(([label, value], index) => `<div style="--path-index:${index}"><dt>${label}</dt><dd>${value}</dd></div>`).join("")}</dl>` : emptyState("user-round", "لا توجد تفاصيل إضافية", "لا تتوفر بيانات صفية أخرى مرتبطة بهذا القيد.")}
         </article>
@@ -1001,33 +1202,42 @@ function renderPortalPageMarkup(page, student) {
       student.attendance.percent === null
         ? null
         : Math.min(100, Math.max(0, student.attendance.percent));
+    const attendanceIllustration = student.attendanceRecords.length
+      ? studentArtwork.pages.attendance.active
+      : null;
     return `
       <section class="portal-page study-page" aria-labelledby="portal-page-title">
-        <header class="study-page__heading" data-reveal><span class="study-page__eyebrow">كل يوم هو خطوة</span><h2 id="portal-page-title">الحضور والغياب</h2><p>سجلّك اليومي كما ورد من المدرسة.</p></header>
+        ${renderStudyPageHeading("كل يوم هو خطوة", "الحضور والغياب", "سجلّك اليومي كما ورد من المدرسة.", attendanceIllustration, studentFloatingIcons.schedule)}
         <div class="attendance-overview" data-reveal>
           <div class="attendance-overview__lead"><span>مؤشر الحضور</span>${attendancePercent === null ? "<strong>بانتظار أول سجل</strong>" : `<strong>${attendancePercent.toLocaleString("ar-LY")}<small>%</small></strong>`}<p>${attendancePercent === null ? "لا توجد سجلات حضور مرتبطة بالقيد حتى الآن." : `مبني على ${student.attendance.recordCount.toLocaleString("ar-LY")} سجلًا دراسيًا.`}</p></div>
           <div class="attendance-overview__counts"><div><i data-lucide="circle-check"></i><span>حضور</span><strong>${student.attendance.present.toLocaleString("ar-LY")}</strong></div><div><i data-lucide="clock-3"></i><span>تأخر</span><strong>${student.attendance.late.toLocaleString("ar-LY")}</strong></div><div><i data-lucide="circle-minus"></i><span>غياب</span><strong>${student.attendance.absent.toLocaleString("ar-LY")}</strong></div></div>
         </div>
         <section class="attendance-journal" aria-label="أحدث سجلات الحضور"><header class="feature-heading"><div><span class="feature-kicker">من الأحدث إلى الأقدم</span><h3>دفتر الأيام</h3></div><i data-lucide="notebook-tabs"></i></header>
-          ${student.attendanceRecords.length ? `<ol class="attendance-journal__list">${student.attendanceRecords.map((entry, index) => `<li style="--path-index:${Math.min(index, 5)}"><time>${entry.date}</time><span class="attendance-journal__status"><i data-lucide="${entry.lateMinutes ? "clock-3" : "calendar-check"}"></i>${entry.status}</span>${entry.lateMinutes ? `<small>تأخر ${entry.lateMinutes.toLocaleString("ar-LY")} دقيقة</small>` : ""}</li>`).join("")}</ol>` : emptyState("calendar-x-2", "دفتر الحضور فارغ حاليًا", "ستظهر هنا السجلات فور تسجيلها للقيد الدراسي.")}
+          ${student.attendanceRecords.length ? `<ol class="attendance-journal__list">${student.attendanceRecords.map((entry, index) => `<li style="--path-index:${Math.min(index, 5)}"><time>${entry.date}</time><span class="attendance-journal__status"><i data-lucide="${entry.lateMinutes ? "clock-3" : "calendar-check"}"></i>${entry.status}</span>${entry.lateMinutes ? `<small>تأخر ${entry.lateMinutes.toLocaleString("ar-LY")} دقيقة</small>` : ""}</li>`).join("")}</ol>` : emptyState("calendar-x-2", "دفتر الحضور فارغ حاليًا", "ستظهر هنا السجلات فور تسجيلها للقيد الدراسي.", studentArtwork.pages.attendance.empty)}
         </section>
       </section>
     `;
   }
 
   if (page === "results") {
+    const resultsIllustration = student.results.length
+      ? studentArtwork.pages.results
+      : null;
     return `
       <section class="portal-page study-page" aria-labelledby="portal-page-title">
-        <header class="study-page__heading" data-reveal><span class="study-page__eyebrow">ثمار التعلّم</span><h2 id="portal-page-title">النتائج والتقييمات</h2><p>تظهر هنا نتائجك التي اعتمدتها المدرسة فقط.</p></header>
-        ${student.results.length ? `<div class="results-atlas">${student.results.map((result, index) => `<article class="result-island" data-reveal style="--path-index:${Math.min(index, 5)}"><span class="result-island__index">${String(index + 1).toLocaleString("ar-LY", { minimumIntegerDigits: 2 })}</span><div class="result-island__subject"><span>المادة</span><h3>${result.subject}</h3></div><div class="result-island__score">${result.percentage === null ? `<span>التقدير</span><strong class="grade-token">${result.grade}</strong>` : `<span>النتيجة المعتمدة</span><strong>${result.percentage.toLocaleString("ar-LY")}<small>%</small></strong>${renderProgress(result.percentage, `نتيجة ${result.subject}`)}`}</div></article>`).join("")}</div>` : emptyState("chart-no-axes-column-increasing", "لا توجد نتائج معتمدة بعد", "ستظهر نتائجك هنا عندما تعتمدها المدرسة.")}
+        ${renderStudyPageHeading("ثمار التعلّم", "النتائج والتقييمات", "تظهر هنا نتائجك التي اعتمدتها المدرسة فقط.", resultsIllustration, studentFloatingIcons.achievement)}
+        ${student.results.length ? `<div class="results-atlas">${student.results.map((result, index) => `<article class="result-island" data-reveal style="--path-index:${Math.min(index, 5)}"><span class="result-island__index">${String(index + 1).toLocaleString("ar-LY", { minimumIntegerDigits: 2 })}</span><div class="result-island__subject"><span>المادة</span><h3>${result.subject}</h3></div><div class="result-island__score">${result.percentage === null ? `<span>التقدير</span><strong class="grade-token">${result.grade}</strong>` : `<span>النتيجة المعتمدة</span><strong>${result.percentage.toLocaleString("ar-LY")}<small>%</small></strong>${renderProgress(result.percentage, `نتيجة ${result.subject}`)}`}</div></article>`).join("")}</div>` : emptyState("chart-no-axes-column-increasing", "لا توجد نتائج معتمدة بعد", "ستظهر نتائجك هنا عندما تعتمدها المدرسة.", studentArtwork.home.results.empty)}
       </section>
     `;
   }
 
   if (page === "fees") {
+    const feesIllustration = student.feeRecords.length
+      ? studentArtwork.pages.fees.active
+      : null;
     return `
       <section class="portal-page study-page" aria-labelledby="portal-page-title">
-        <header class="study-page__heading" data-reveal><span class="study-page__eyebrow">تفاصيل القيد</span><h2 id="portal-page-title">الرسوم والمستحقات</h2><p>متابعة واضحة لبنود الرسوم المسجلة على القيد.</p></header>
+        ${renderStudyPageHeading("تفاصيل القيد", "الرسوم والمستحقات", "متابعة واضحة لبنود الرسوم المسجلة على القيد.", feesIllustration, studentFloatingIcons.contact)}
         ${
           student.feeRecords.length
             ? `<div class="fee-ledger">${student.feeRecords
@@ -1041,6 +1251,7 @@ function renderPortalPageMarkup(page, student) {
                 "wallet",
                 "لا توجد بنود رسوم مسجلة",
                 "لا توجد رسوم مرتبطة بهذا القيد في الوقت الحالي.",
+                studentArtwork.pages.fees.empty,
               )
         }
       </section>
@@ -1048,16 +1259,19 @@ function renderPortalPageMarkup(page, student) {
   }
 
   if (page === "timetable") {
+    const timetableIllustration = student.timetable.length
+      ? studentArtwork.pages.timetable.active
+      : null;
     return `
       <section class="portal-page study-page" aria-labelledby="portal-page-title">
-        <header class="study-page__heading" data-reveal><span class="study-page__eyebrow">${student.academicYear !== "—" ? `العام الدراسي ${student.academicYear}` : "إيقاع الأسبوع"}</span><h2 id="portal-page-title">جدولي الدراسي</h2><p>مواعيد الحصص المنشورة للصف المرتبط بقيدك.</p></header>
-        ${student.timetable.length ? `<div class="week-ribbon">${student.timetable.map((day, index) => `<article class="week-ribbon__day ${Number(day.day_number) === new Date().getDay() ? "is-today" : ""}" data-reveal style="--path-index:${Math.min(index, 5)}"><header><span>${String(day.day_number + 1).toLocaleString("ar-LY", { minimumIntegerDigits: 2 })}</span><h3>${day.day}</h3>${Number(day.day_number) === new Date().getDay() ? "<small>اليوم</small>" : ""}</header><ol>${day.lessons.map((lesson) => `<li><time>${lesson.time}</time><div><strong>${lesson.subject}</strong><small>${[lesson.period, lesson.teacher, lesson.room].filter(Boolean).join(" · ")}</small></div><i data-lucide="move-up-left"></i></li>`).join("")}</ol></article>`).join("")}</div>` : emptyState("calendar-days", "لم يُنشر جدول الصف بعد", "سيظهر جدولك هنا عندما تضيف المدرسة الحصص إلى النظام.")}
+        ${renderStudyPageHeading(student.academicYear !== "—" ? `العام الدراسي ${student.academicYear}` : "إيقاع الأسبوع", "جدولي الدراسي", "مواعيد الحصص المنشورة للصف المرتبط بقيدك.", timetableIllustration, studentFloatingIcons.schedule)}
+        ${student.timetable.length ? `<div class="week-ribbon">${student.timetable.map((day, index) => `<article class="week-ribbon__day ${Number(day.day_number) === new Date().getDay() ? "is-today" : ""}" data-reveal style="--path-index:${Math.min(index, 5)}"><header><span>${String(day.day_number + 1).toLocaleString("ar-LY", { minimumIntegerDigits: 2 })}</span><h3>${day.day}</h3>${Number(day.day_number) === new Date().getDay() ? "<small>اليوم</small>" : ""}</header><ol>${day.lessons.map((lesson) => `<li><time>${lesson.time}</time><div><strong>${lesson.subject}</strong><small>${[lesson.period, lesson.teacher, lesson.room].filter(Boolean).join(" · ")}</small></div><i data-lucide="move-up-left"></i></li>`).join("")}</ol></article>`).join("")}</div>` : emptyState("calendar-days", "لم يُنشر جدول الصف بعد", "سيظهر جدولك هنا عندما تضيف المدرسة الحصص إلى النظام.", studentArtwork.pages.timetable.empty)}
       </section>
     `;
   }
 
   if (page === "platforms") {
-    return `<section class="portal-page study-page" aria-labelledby="portal-page-title"><header class="study-page__heading" data-reveal><span class="study-page__eyebrow">مساحات التعلّم</span><h2 id="portal-page-title">روابطي التعليمية</h2><p>الخدمات التي تربطها المدرسة بحسابك.</p></header><div class="platform-space" data-reveal><span><i data-lucide="link-2"></i></span>${emptyState("book-open", "لا توجد روابط تعليمية مهيأة", "لم تُضف المدرسة روابط خدمات تعليمية لهذا الحساب بعد.")}</div></section>`;
+    return `<section class="portal-page study-page" aria-labelledby="portal-page-title">${renderStudyPageHeading("مساحات التعلّم", "روابطي التعليمية", "الخدمات التي تربطها المدرسة بحسابك.", studentArtwork.pages.platforms, studentFloatingIcons.welcome)}<div class="platform-space" data-reveal><span><i data-lucide="link-2"></i></span>${emptyState("book-open", "لا توجد روابط تعليمية مهيأة", "لم تُضف المدرسة روابط خدمات تعليمية لهذا الحساب بعد.")}</div></section>`;
   }
 
   return renderPortalHome(student);
@@ -1085,12 +1299,12 @@ function renderStudentPortal() {
             )
             .join("")}
         </nav>
-        <div class="portal-sidebar__bottom"><a href="mailto:${schoolProfile.email}"><i data-lucide="circle-help"></i><span>تواصل مع المدرسة</span></a><button class="portal-logout" type="button" data-target="logout"><i data-lucide="log-out"></i><span>تسجيل الخروج</span></button></div>
+        <div class="portal-sidebar__bottom">${renderWhatsAppLink("تواصل عبر واتساب", "مساعدة بشأن الحساب الدراسي", "whatsapp-link whatsapp-link--sidebar")}<button class="portal-logout" type="button" data-target="logout"><i data-lucide="log-out"></i><span>تسجيل الخروج</span></button></div>
       </aside>
       <main class="student-main">
         <header class="student-topbar">
           <div class="student-topbar__title"><span class="section-index">${activePage === "home" ? "مساحتك الرقمية" : title}</span><h1>${activePage === "home" ? "بوابتك إلى يومٍ دراسي أجمل" : title}</h1></div>
-          <div class="student-topbar__actions"><span class="today-date"><i data-lucide="calendar-days"></i>${new Date().toLocaleDateString("ar-LY", { weekday: "long", day: "numeric", month: "long" })}</span><button class="student-topbar__logout" type="button" data-target="logout"><i data-lucide="log-out"></i><span>خروج آمن</span></button></div>
+          <div class="student-topbar__actions"><span class="today-date"><i data-lucide="calendar-days"></i>${new Date().toLocaleDateString("ar-LY", { weekday: "long", day: "numeric", month: "long" })}</span><button class="student-topbar__logout" type="button" data-target="logout"><i data-lucide="log-out"></i><span>خروج آمن</span></button>${renderWhatsAppLink("واتساب", "مساعدة بشأن الحساب الدراسي", "whatsapp-link whatsapp-link--quick")}</div>
         </header>
         <div class="student-content" data-portal-view>${renderPortalPageMarkup(activePage, student)}</div>
         <footer class="student-footer"><span>${schoolProfile.shortName}</span><span>مساحتك الدراسية، في مكان واحد</span></footer>

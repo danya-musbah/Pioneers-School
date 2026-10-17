@@ -6,3 +6,6 @@ verify_jwt = false
 
 [functions.student-app-access]
 verify_jwt = false
+
+[functions.student-avatar]
+verify_jwt = true

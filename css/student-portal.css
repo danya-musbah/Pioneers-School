@@ -194,6 +194,28 @@
   background: rgb(255 255 255 / 9%);
 }
 
+.student-shell .portal-sidebar__bottom .whatsapp-link--sidebar {
+  min-height: 44px;
+  justify-content: flex-start;
+  padding-inline: 10px;
+  color: #fff;
+  background: transparent;
+  border: 0;
+  font-size: 0.76rem;
+}
+
+.student-shell
+  .portal-sidebar__bottom
+  .whatsapp-link--sidebar
+  > .lucide:first-child {
+  color: #a8e5fa;
+}
+
+.student-shell .portal-sidebar__bottom .whatsapp-link--sidebar:hover {
+  background: rgb(255 255 255 / 9%);
+  transform: none;
+}
+
 .portal-sidebar__bottom .lucide {
   width: 18px;
   height: 18px;
@@ -293,6 +315,10 @@
   transform: translateY(-1px);
 }
 
+.student-shell .whatsapp-link--quick {
+  display: none;
+}
+
 .student-topbar__logout .lucide {
   width: 17px;
   height: 17px;
@@ -313,12 +339,59 @@
   align-items: center;
   gap: 18px;
   overflow: hidden;
-  padding: clamp(24px, 4vw, 46px) clamp(23px, 4vw, 52px);
+  padding: clamp(24px, 2.4vw, 34px) clamp(23px, 4vw, 52px);
   color: #fff;
   background: linear-gradient(125deg, #055ba6 0%, #0568a6 58%, #0878b5 100%);
   border: 1px solid rgb(255 255 255 / 32%);
   border-radius: 30px 8px 30px 8px;
   box-shadow: 0 20px 48px rgb(5 91 166 / 18%);
+}
+
+.student-hero__float-field {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.student-floating-icon {
+  position: absolute;
+  width: var(--icon-size, 34px);
+  height: var(--icon-size, 34px);
+  object-fit: contain;
+  opacity: var(--icon-opacity, 0.72);
+  filter: drop-shadow(0 5px 9px rgb(3 35 64 / 13%));
+  pointer-events: none;
+  animation: student-icon-drift var(--icon-duration, 9s) ease-in-out infinite;
+  animation-delay: var(--icon-delay, 0s);
+}
+
+.student-floating-icon--hero {
+  top: 10%;
+  left: 5%;
+  --icon-size: 42px;
+  --icon-opacity: 0.75;
+  --icon-duration: 8.5s;
+}
+
+.student-floating-icon--route {
+  top: 16%;
+  left: 42%;
+  --icon-size: 30px;
+  --icon-opacity: 0.56;
+  --icon-duration: 10.5s;
+  --icon-delay: -3s;
+}
+
+@keyframes student-icon-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(-5deg);
+  }
+  50% {
+    transform: translate3d(0, -7px, 0) rotate(4deg);
+  }
 }
 
 .student-hero::before,
@@ -375,7 +448,7 @@
 }
 
 .student-hero__greeting {
-  margin: 22px 0 1px;
+  margin: 16px 0 1px;
   color: rgb(255 255 255 / 82%);
   font-size: 0.84rem;
 }
@@ -404,9 +477,9 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px 18px;
-  margin-top: 17px;
+  margin-top: 13px;
   color: rgb(255 255 255 / 82%);
-  font-size: 0.72rem;
+  font-size: 0.76rem;
 }
 
 .student-hero__facts .lucide {
@@ -420,7 +493,7 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  margin-top: 22px;
+  margin-top: 16px;
   padding: 0 15px;
   color: #163c55;
   background: #fff;
@@ -455,9 +528,100 @@
 .student-hero__portrait {
   position: relative;
   min-width: 210px;
-  min-height: 260px;
+  min-height: 300px;
   display: grid;
   place-items: center;
+}
+
+.student-photo-frame {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: end center;
+  overflow: hidden;
+  margin: 0;
+  background:
+    radial-gradient(ellipse at 50% 26%, rgb(24 162 217 / 10%), transparent 66%),
+    linear-gradient(180deg, #fff 0%, #f4faff 100%);
+  border: 1px solid rgb(255 255 255 / 92%);
+  border-radius: 48% 48% 17px 17px;
+  box-shadow: 0 14px 32px rgb(0 34 65 / 17%);
+}
+
+.student-photo-frame::before {
+  position: absolute;
+  inset: 8px;
+  border: 1px solid rgb(5 91 166 / 9%);
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+}
+
+.student-photo-frame__image {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  object-position: center bottom;
+}
+
+.student-photo-frame--hero {
+  width: clamp(142px, 14vw, 178px);
+  height: 276px;
+}
+
+.student-photo-frame--profile {
+  width: clamp(108px, 12vw, 150px);
+  height: 238px;
+  border-radius: 44% 44% 14px 14px;
+}
+
+.student-photo-frame[data-avatar-kind="unknown"] {
+  place-items: center;
+  background: linear-gradient(145deg, #fff 0%, #e8f6fc 100%);
+  border-radius: 20px 7px 20px 7px;
+}
+
+.student-photo-frame--hero[data-avatar-kind="unknown"],
+.student-photo-frame--profile[data-avatar-kind="unknown"] {
+  height: auto;
+  aspect-ratio: 1.508;
+}
+
+.student-photo-frame[data-avatar-kind="unknown"] .student-photo-frame__image {
+  object-position: center;
+}
+
+.student-photo-frame.is-image-unavailable .student-photo-frame__image {
+  visibility: hidden;
+}
+
+.student-photo-frame.is-image-unavailable::after {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--portal-blue-dark);
+  content: attr(data-fallback-initial);
+  font-family: var(--font-ar, "Segoe UI", sans-serif);
+  font-size: 3.4rem;
+  font-weight: 800;
+}
+
+.student-hero__companion {
+  position: absolute;
+  z-index: 2;
+  bottom: 14px;
+  left: 0;
+  width: clamp(56px, 6vw, 82px);
+  height: 166px;
+  object-fit: contain;
+  object-position: center bottom;
+  filter: drop-shadow(0 8px 12px rgb(0 37 71 / 18%));
+  pointer-events: none;
 }
 
 .student-avatar {
@@ -486,17 +650,6 @@
   width: 17px;
   height: 17px;
   color: var(--portal-orange, #f28c0f);
-}
-
-.student-avatar--hero {
-  z-index: 1;
-  width: clamp(148px, 17vw, 196px);
-  aspect-ratio: 1;
-  color: #055ba6;
-  font-size: clamp(4rem, 7vw, 6.5rem);
-  box-shadow:
-    0 18px 42px rgb(0 34 65 / 23%),
-    inset 0 0 0 8px rgb(5 91 166 / 5%);
 }
 
 .hero-orbit {
@@ -540,29 +693,40 @@
   background: #f28c0f;
 }
 
-.hero-portrait-caption {
-  position: absolute;
-  z-index: 2;
-  right: 50%;
-  bottom: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 11px;
-  color: #164766;
-  background: #fff;
-  border: 1px solid rgb(255 255 255 / 78%);
-  border-radius: 999px;
-  box-shadow: 0 5px 16px rgb(0 32 60 / 16%);
-  font-size: 0.68rem;
-  white-space: nowrap;
-  transform: translateX(50%);
+.feature-heading__art,
+.fees-feature__art,
+.study-page__illustration,
+.empty-state__art {
+  display: block;
+  flex: 0 0 auto;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: center bottom;
 }
 
-.hero-portrait-caption .lucide {
-  width: 15px;
-  height: 15px;
-  color: var(--portal-orange);
+.feature-heading__art {
+  width: 48px;
+  height: 76px;
+  align-self: flex-start;
+}
+
+.study-page__floating-icon {
+  position: absolute;
+  z-index: 0;
+  top: 4%;
+  left: clamp(90px, 12vw, 170px);
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  opacity: 0.32;
+  pointer-events: none;
+  animation: student-icon-drift 10s ease-in-out infinite;
+}
+
+.fees-feature__art {
+  width: 50px;
+  height: 78px;
+  margin-inline-start: auto;
 }
 
 .student-home-grid {
@@ -639,7 +803,7 @@
 .feature-kicker,
 .study-page__eyebrow {
   color: var(--portal-blue);
-  font-size: 0.69rem;
+  font-size: 0.74rem;
   font-weight: 750;
 }
 
@@ -840,7 +1004,7 @@
 
 .day-path__list small {
   color: var(--portal-muted);
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   overflow-wrap: anywhere;
 }
 
@@ -1015,12 +1179,42 @@
 .student-shell .empty-state p {
   margin-top: 3px;
   color: var(--portal-muted);
-  font-size: 0.7rem;
+  font-size: 0.74rem;
   line-height: 1.65;
 }
 
+.student-shell .empty-state--illustrated {
+  align-items: center;
+  padding-block: 7px;
+}
+
+.empty-state__art {
+  width: 70px;
+  height: 118px;
+}
+
 .study-page__heading {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: clamp(12px, 3vw, 26px);
   margin: 4px 0 22px;
+}
+
+.study-page__heading-copy {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.study-page__illustration {
+  position: relative;
+  z-index: 1;
+  width: clamp(88px, 12vw, 140px);
+  height: 164px;
+  align-self: flex-end;
 }
 
 .study-page__eyebrow {
@@ -1078,16 +1272,10 @@
 .profile-story__identity {
   position: relative;
   z-index: 1;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 17px;
-}
-
-.student-avatar--profile {
-  width: 75px;
-  height: 75px;
-  color: var(--portal-blue-dark);
-  font-size: 2.5rem;
 }
 
 .profile-story__identity > div:last-child > span,
@@ -1628,6 +1816,24 @@
     padding-inline: 12px;
   }
 
+  .student-shell .whatsapp-link--quick {
+    min-height: 44px;
+    display: inline-flex;
+    gap: 6px;
+    padding-inline: 10px;
+    font-size: 0.73rem;
+    white-space: nowrap;
+  }
+
+  .student-shell .whatsapp-link--quick > .lucide:first-child {
+    width: 17px;
+    height: 17px;
+  }
+
+  .student-shell .whatsapp-link--quick .whatsapp-link__arrow {
+    display: none;
+  }
+
   .student-main {
     width: 100%;
     padding: 23px clamp(18px, 4vw, 38px) 28px;
@@ -1719,7 +1925,7 @@
     padding: 4px 2px;
     color: #496477;
     border-radius: 12px 4px 12px 12px;
-    font-size: 0.65rem;
+    font-size: 0.68rem;
     line-height: 1.2;
   }
 
@@ -1783,11 +1989,24 @@
   }
 
   .student-shell .student-topbar__logout {
-    min-height: 32px;
+    min-height: 44px;
     gap: 5px;
     padding-inline: 8px;
     border-radius: 9px;
     font-size: 0.64rem;
+  }
+
+  .student-shell .whatsapp-link--quick {
+    min-height: 44px;
+    gap: 5px;
+    padding-inline: 8px;
+    border-radius: 9px;
+    font-size: 0.64rem;
+  }
+
+  .student-shell .whatsapp-link--quick > .lucide:first-child {
+    width: 14px;
+    height: 14px;
   }
 
   .student-topbar__logout .lucide {
@@ -1805,7 +2024,7 @@
 
   .student-hero__eyebrow {
     gap: 5px;
-    font-size: 0.65rem;
+    font-size: 0.7rem;
   }
 
   .student-hero__eyebrow .lucide {
@@ -1815,7 +2034,7 @@
 
   .student-hero__greeting {
     margin-top: 19px;
-    font-size: 0.7rem;
+    font-size: 0.73rem;
   }
 
   .student-hero h2 {
@@ -1832,7 +2051,7 @@
     display: grid;
     gap: 6px;
     margin-top: 12px;
-    font-size: 0.63rem;
+    font-size: 0.68rem;
   }
 
   .student-hero__facts .lucide {
@@ -1860,14 +2079,48 @@
     margin-top: 40px;
   }
 
-  .student-avatar--hero {
-    width: clamp(92px, 27vw, 120px);
-    font-size: 3.3rem;
+  .student-photo-frame--hero {
+    width: clamp(72px, 21vw, 88px);
+    height: 184px;
   }
 
-  .student-avatar--hero > .lucide {
-    width: 14px;
-    height: 14px;
+  .student-photo-frame--hero[data-avatar-kind="unknown"] {
+    width: min(100%, 114px);
+    height: auto;
+    aspect-ratio: 1.508;
+  }
+
+  .student-photo-frame--profile {
+    width: 82px;
+    height: 158px;
+  }
+
+  .student-photo-frame--profile[data-avatar-kind="unknown"] {
+    width: 112px;
+    height: auto;
+    aspect-ratio: 1.508;
+  }
+
+  .student-hero__companion,
+  .student-hero__float-field,
+  .study-page__floating-icon {
+    display: none;
+  }
+
+  .study-page__illustration {
+    width: 76px;
+    height: 118px;
+  }
+
+  .feature-heading__art,
+  .fees-feature__art {
+    width: 40px;
+    height: 68px;
+  }
+
+  .empty-state__art {
+    width: 54px;
+    height: 94px;
   }
 
   .hero-orbit {
@@ -1888,18 +2141,6 @@
   .hero-planet--orange {
     bottom: 13%;
     left: 1%;
-  }
-
-  .hero-portrait-caption {
-    bottom: -8px;
-    gap: 4px;
-    padding: 5px 7px;
-    font-size: 0.56rem;
-  }
-
-  .hero-portrait-caption .lucide {
-    width: 12px;
-    height: 12px;
   }
 
   .student-home-grid {
@@ -1996,7 +2237,7 @@
   }
 
   .day-path__list small {
-    font-size: 0.62rem;
+    font-size: 0.68rem;
   }
 
   .subject-trail li {
@@ -2022,22 +2263,16 @@
   }
 
   .study-page__heading p {
-    font-size: 0.76rem;
+    font-size: 0.79rem;
   }
 
   .profile-story {
     padding: 19px 15px;
   }
 
-  .student-avatar--profile {
-    width: 58px;
-    height: 58px;
-    font-size: 2rem;
-  }
-
   .profile-story__identity {
     gap: 11px;
-    padding-inline-end: 45px;
+    padding-inline-end: 0;
   }
 
   .profile-story__identity h3 {
@@ -2046,13 +2281,11 @@
 
   .profile-story__identity > div:last-child > span,
   .profile-story__identity p {
-    font-size: 0.66rem;
+    font-size: 0.7rem;
   }
 
   .profile-story__seal {
-    top: 15px;
-    left: 14px;
-    font-size: 0.53rem;
+    display: none;
   }
 
   .profile-story__seal .lucide {
@@ -2097,7 +2330,7 @@
   }
 
   .attendance-overview__counts span {
-    font-size: 0.6rem;
+    font-size: 0.65rem;
   }
 
   .attendance-overview__counts strong {
@@ -2135,12 +2368,12 @@
   .fee-entry__number {
     width: 32px;
     height: 32px;
-    font-size: 0.63rem;
+    font-size: 0.68rem;
   }
 
   .result-island__subject > span,
   .result-island__score > span {
-    font-size: 0.59rem;
+    font-size: 0.65rem;
   }
 
   .result-island__subject h3 {
@@ -2169,7 +2402,7 @@
   }
 
   .fee-entry__amounts span {
-    font-size: 0.59rem;
+    font-size: 0.64rem;
   }
 
   .fee-entry__amounts strong {
@@ -2186,6 +2419,10 @@
     padding: 9px 13px;
   }
 
+  .week-ribbon__day > header small {
+    font-size: 0.68rem;
+  }
+
   .week-ribbon__day ol {
     padding-inline: 13px;
   }
@@ -2199,7 +2436,7 @@
     flex-direction: column;
     gap: 2px;
     margin-top: 20px;
-    font-size: 0.63rem;
+    font-size: 0.68rem;
   }
 }
 
@@ -2217,10 +2454,6 @@
     font-size: 1.48rem;
   }
 
-  .student-avatar--hero {
-    width: 88px;
-  }
-
   .hero-orbit {
     width: 125px;
     height: 125px;
@@ -2231,10 +2464,6 @@
     height: 145px;
   }
 
-  .hero-portrait-caption {
-    font-size: 0.51rem;
-  }
-
   .today-date {
     max-width: 128px;
     font-size: 0.57rem;
@@ -2242,107 +2471,6 @@
 
   .attendance-orbit-layout {
     grid-template-columns: minmax(100px, 0.72fr) minmax(0, 1.28fr);
-  }
-}
-
-/* Final polish: clearer microcopy and a tighter wide-screen rhythm. */
-@media (min-width: 1081px) {
-  .student-hero {
-    padding-block: clamp(28px, 2.8vw, 34px);
-  }
-
-  .student-hero__greeting {
-    margin-top: 16px;
-  }
-
-  .student-hero__facts {
-    margin-top: 13px;
-    font-size: 0.76rem;
-  }
-
-  .hero-profile-link {
-    margin-top: 16px;
-  }
-}
-
-.student-shell .feature-kicker {
-  font-size: 0.74rem;
-}
-
-.student-shell .day-path__list small {
-  font-size: 0.72rem;
-}
-
-.student-shell .empty-state p {
-  font-size: 0.74rem;
-}
-
-.student-shell .hero-portrait-caption {
-  font-size: 0.72rem;
-}
-
-@media (max-width: 680px) {
-  .student-hero__eyebrow {
-    font-size: 0.7rem;
-  }
-
-  .student-hero__greeting {
-    font-size: 0.73rem;
-  }
-
-  .student-hero__facts {
-    font-size: 0.68rem;
-  }
-
-  .hero-portrait-caption {
-    font-size: 0.61rem;
-  }
-
-  .portal-nav__item {
-    font-size: 0.68rem;
-  }
-
-  .day-path__list small {
-    font-size: 0.68rem;
-  }
-
-  .study-page__heading p {
-    font-size: 0.79rem;
-  }
-
-  .attendance-overview__counts span {
-    font-size: 0.65rem;
-  }
-
-  .profile-story__identity > div:last-child > span,
-  .profile-story__identity p {
-    font-size: 0.7rem;
-  }
-
-  .profile-story__seal {
-    font-size: 0.6rem;
-  }
-
-  .result-island__index,
-  .fee-entry__number {
-    font-size: 0.68rem;
-  }
-
-  .result-island__subject > span,
-  .result-island__score > span {
-    font-size: 0.65rem;
-  }
-
-  .fee-entry__amounts span {
-    font-size: 0.64rem;
-  }
-
-  .week-ribbon__day > header small {
-    font-size: 0.68rem;
-  }
-
-  .student-footer {
-    font-size: 0.68rem;
   }
 }
 

@@ -3,6 +3,8 @@ export const schoolProfile = {
   shortName: "رواد العلم",
   slogan: "تعليمٌ يفتح العقول ويصقل القيم",
   phone: "092-4444078",
+  phoneCountryCode: "218",
+  phoneCountryCode: "218",
   email: "hsn324367@gmail.com",
   address: "تاجوراء، طرابلس، ليبيا",
   mapUrl:
@@ -84,3 +86,10 @@ export const decorativeStickers = [
   "assets/icons/i10.png",
   "assets/icons/i16.png",
 ];
+
+export const studentFloatingIcons = Object.freeze({
+  welcome: "assets/icons/i21.png",
+  schedule: "assets/icons/i20.png",
+  achievement: "assets/icons/i23.png",
+  contact: "assets/icons/i25.png",
+});
