@@ -1356,6 +1356,10 @@ button {
   border-color: var(--teal);
   box-shadow: 0 0 0 4px rgba(23, 166, 151, 0.11);
 }
+.input-shell.is-invalid {
+  border-color: rgba(168, 66, 57, 0.7);
+  box-shadow: 0 0 0 4px rgba(168, 66, 57, 0.08);
+}
 .input-shell > .lucide {
   width: 19px;
   height: 19px;
@@ -1408,6 +1412,10 @@ button {
   width: 100%;
   min-height: 53px;
   margin-top: 4px;
+}
+.login-submit:disabled {
+  opacity: 0.8;
+  cursor: wait;
 }
 .login-submit .lucide[data-login-spinner] {
   display: none;

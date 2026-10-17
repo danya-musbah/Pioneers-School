@@ -25,12 +25,12 @@
   --color-blood-gazelle-soft: #f8eeee;
   --color-blood-gazelle-text: #741919;
 
-  /* ---- School logo palette (additive; existing c-* tokens stay stable) ---- */
-  --brand-blue-dark: #032340;
-  --brand-blue: #17a697;
-  --brand-blue-light: #1fbfaf;
-  --brand-orange: #d9a73e;
-  --brand-mint: #77d9cf;
+  /* ---- School identity palette ---- */
+  --brand-blue-dark: #055ba6;
+  --brand-blue: #0568a6;
+  --brand-blue-light: #18a2d9;
+  --brand-orange: #f28c0f;
+  --brand-mint: #dff3fb; /* legacy token: a neutral blue-tinted surface */
   --brand-black: #0d0d0d;
 
   /* ---- Semantic surface & text ---- */

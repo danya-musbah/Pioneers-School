@@ -1,6 +1,6 @@
 // Browser-safe Supabase settings. These values are public; never place service-role credentials here.
 export const supabaseConfig = {
-  url: "https://ckvdazkeoggbhtjcbktf.supabase.co",
+  url: "https://bgtbqqtmtrgkfhhxoywi.supabase.co",
   anonKey:
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNrdmRhemtlb2dnYmh0amNia3RmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE5NTU5MTUsImV4cCI6MjEwNzUzMTkxNX0.J_nul7_lQ61R9RuhCrkNj9b-75QS4IQ5_nylDHVVyCc",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJndGJxcXRtdHJna2ZoaHhveXdpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIyMjU5MDQsImV4cCI6MjEwNzgwMTkwNH0.wqec84hxHQfMnA1wVb0fD3URUTcjb4DkomjwtJqXmm8",
 };

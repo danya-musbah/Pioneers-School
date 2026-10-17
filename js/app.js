@@ -198,6 +198,26 @@ async function loadStudentPortal(client) {
   return mapPortalData(data);
 }
 
+function setLoginFieldState(field, isError) {
+  const shell = field.closest(".input-shell");
+  if (shell) {
+    shell.classList.toggle("is-invalid", isError);
+  }
+  field.setAttribute("aria-invalid", String(isError));
+}
+
+function clearLoginFeedback(form) {
+  const feedback = form.querySelector(".form-feedback");
+  if (feedback) {
+    feedback.textContent = "تُحمّل بيانات الطالب بعد التحقق من الحساب.";
+    feedback.dataset.state = "info";
+  }
+  const fields = form.querySelectorAll(
+    'input[name="studentNumber"], input[name="password"]',
+  );
+  fields.forEach((field) => setLoginFieldState(field, false));
+}
+
 function refreshIcons() {
   if (window.lucide?.createIcons) {
     window.lucide.createIcons({
@@ -361,6 +381,17 @@ function bindGlobalEvents() {
     void submitLogin(form);
   });
 
+  document.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    const form = target.closest("[data-login-form]");
+    if (!form) return;
+    clearLoginFeedback(form);
+    if (target.name === "studentNumber" || target.name === "password") {
+      setLoginFieldState(target, false);
+    }
+  });
+
   document.addEventListener("change", (event) => {
     const target = event.target;
     if (!target.matches("[data-password-toggle]")) return;
@@ -412,13 +443,18 @@ async function submitLogin(form) {
   if (!username || !secret) {
     feedback.textContent = "أدخل رقم الطالب وكلمة المرور للمتابعة.";
     feedback.dataset.state = "error";
-    input.focus();
+    setLoginFieldState(input, !username);
+    setLoginFieldState(password, !secret);
+    if (!username) input.focus();
+    else password.focus();
     return;
   }
   if (!hasSupabaseConfig()) {
     feedback.textContent =
       "إعداد الاتصال بالبوابة غير مكتمل. تواصل مع إدارة المدرسة.";
     feedback.dataset.state = "error";
+    setLoginFieldState(input, true);
+    setLoginFieldState(password, true);
     return;
   }
 
@@ -428,40 +464,45 @@ async function submitLogin(form) {
   submitLabel.textContent = "جارٍ التحقق";
   feedback.textContent = "نتحقق من بيانات الدخول بأمان…";
   feedback.dataset.state = "info";
+  setLoginFieldState(input, false);
+  setLoginFieldState(password, false);
   refreshIcons();
 
   let client;
   let failureMessage =
-    "تعذر الاتصال بخدمة الدخول. تحقق من نشر الدالة وإعداد نطاق CORS.";
+    "تعذر الاتصال بخدمة البوابة. تحقق من اتصال الإنترنت أو تواصل مع إدارة المدرسة.";
   try {
     client = await getSupabaseClient();
-    const { data: tokens, error: loginError } = await client.functions.invoke(
-      "student-login",
-      { body: { student_number: username, password: secret } },
-    );
-    if (loginError) {
-      const status = Number(loginError.context?.status || 0);
-      if (status === 404) {
-        failureMessage = "خدمة الدخول غير منشورة على المشروع بعد.";
-      } else if (status === 401 || status === 429) {
-        failureMessage =
-          "تعذر الدخول. تحقق من البيانات أو تواصل مع إدارة المدرسة.";
+    const { data: loginData, error: loginError } =
+      await client.functions.invoke("student-login", {
+        body: { student_number: username, password: secret },
+      });
+
+    if (loginError || !loginData?.access_token || !loginData?.refresh_token) {
+      try {
+        const response = loginError?.context;
+        if (response instanceof Response) {
+          const body = await response.clone().json();
+          if (typeof body?.error === "string") failureMessage = body.error;
+        }
+      } catch {
+        // Keep network/provider details out of the login form.
       }
-      throw new Error("login_unavailable");
-    }
-    if (!tokens?.access_token || !tokens?.refresh_token) {
-      throw new Error("login_unavailable");
+      setLoginFieldState(password, true);
+      throw new Error("login_failed");
     }
 
     const { data: authData, error: sessionError } =
       await client.auth.setSession({
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
+        access_token: loginData.access_token,
+        refresh_token: loginData.refresh_token,
       });
-    if (sessionError || !authData.session) throw new Error("login_unavailable");
+    if (sessionError || !authData?.session || !authData?.user) {
+      throw new Error("login_session_unavailable");
+    }
 
     failureMessage =
-      "تم التحقق من الدخول لكن تعذر تحميل بيانات البوابة. تحقق من نشر بيانات النظام وصلاحية الحساب.";
+      "تم التحقق من الدخول لكن تعذر تحميل بيانات البوابة. تحقق من صلاحية الحساب ونشر بيانات الطالب.";
     const studentData = await loadStudentPortal(client);
     state.student = studentData;
     state.authUser = authData.user;
@@ -505,6 +546,19 @@ async function logout() {
   renderApp();
 }
 
+function revealActivePortalNavItem() {
+  if (!window.matchMedia("(max-width: 880px)").matches) return;
+  const activeItem = app.querySelector(".portal-nav__item.is-active");
+  if (!activeItem) return;
+  activeItem.scrollIntoView({
+    block: "nearest",
+    inline: "nearest",
+    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "auto"
+      : "smooth",
+  });
+}
+
 function renderApp() {
   app.classList.add("motion-ready");
   if (state.page === "student" && state.loggedIn && state.student) {
@@ -516,6 +570,7 @@ function renderApp() {
   }
   refreshIcons();
   observeReveals();
+  revealActivePortalNavItem();
 }
 
 function renderPublicLanding() {
@@ -568,7 +623,7 @@ function renderPublicLanding() {
               <div class="hero-scene__paper"></div>
               <div class="hero-scene__sun" aria-hidden="true"></div>
               <div class="hero-scene__label hero-scene__label--top"><i data-lucide="book-open-check"></i><span>مساحة للتعلّم</span></div>
-              <img class="hero-scene__character" src="assets/3D Schoolboy Character Reference Sheet-Photoroom.png" alt="طالب يحمل كتابه ويرتدي الزي المدرسي" fetchpriority="high" />
+              <img class="hero-scene__character" src="assets/images/Schoolboy-Curly-Hair-Smiling-Waving-Looking-Right.png" alt="طالب يحمل كتابه ويرتدي الزي المدرسي" fetchpriority="high" />
               <img class="sticker sticker--sun" src="${decorativeStickers[0]}" alt="" aria-hidden="true" />
               <img class="sticker sticker--heart" src="${decorativeStickers[1]}" alt="" aria-hidden="true" />
               <img class="sticker sticker--flower" src="${decorativeStickers[2]}" alt="" aria-hidden="true" />
@@ -647,7 +702,7 @@ function renderPublicLanding() {
           <div class="container journey__layout">
             <div class="journey__art" data-reveal>
               <div class="journey__frame"></div>
-              <img src="assets/Cheerful Schoolyard Friends-Photoroom.png" alt="مجموعة من الطلاب بزي المدرسة يتشاركون التعلّم" loading="lazy" />
+              <img src="assets/images/Cheerful-Schoolyard-Friends-With-Background.png" alt="مجموعة من الطلاب بزي المدرسة يتشاركون التعلّم" loading="lazy" />
               <img class="sticker sticker--journey" src="${decorativeStickers[3]}" alt="" aria-hidden="true" />
               <span class="journey__caption">معًا في طريق المعرفة</span>
             </div>
@@ -773,7 +828,7 @@ function renderLoginPage() {
         <aside class="login-scene" data-parallax-scene data-reveal aria-label="طالبة من مدرسة رواد العلم">
           <div class="login-scene__orbit"></div>
           <span class="login-scene__tag"><i data-lucide="book-open-check"></i> التعلّم يفتح الأبواب</span>
-          <img class="login-scene__girl" src="assets/Schoolgirl Character Turnaround Sheet-Photoroom.png" alt="طالبة تحمل كتابًا وترتدي الزي المدرسي" />
+          <img class="login-scene__girl" src="assets/images/Schoolgirl-Standing-Holding-Sign-Looking-Left.png" alt="طالبة تحمل كتابًا وترتدي الزي المدرسي" />
           <img class="login-scene__school" src="assets/images/login background.png" alt="مبنى مدرسة رواد العلم الأولى" loading="lazy" />
           <img class="sticker sticker--login" src="${decorativeStickers[4]}" alt="" aria-hidden="true" />
         </aside>
@@ -787,102 +842,134 @@ function emptyState(icon, title, description) {
   return `<div class="empty-state"><span class="empty-state__icon"><i data-lucide="${icon}"></i></span><div><strong>${title}</strong><p>${description}</p></div></div>`;
 }
 
-function renderPortalHome(student) {
-  const attendanceText =
-    student.attendance.percent === null
-      ? "لا توجد سجلات بعد"
-      : `${student.attendance.percent.toLocaleString("ar-LY")}%`;
-  return `
-    <section class="portal-home" aria-label="ملخص الطالب">
-      <div class="portal-home__lead">
-        <article class="welcome-panel" data-reveal>
-          <span class="welcome-panel__overline">مساحتك الدراسية</span>
-          <h2>أهلًا، ${student.name.split(" ")[0]}.</h2>
-          <p>${student.stage} <span>·</span> ${student.grade} <span>·</span> ${student.section}</p>
-          <button class="text-link" type="button" data-target="page:profile">عرض ملفي <i data-lucide="arrow-up-left"></i></button>
-          <span class="welcome-panel__shape" aria-hidden="true"></span>
-        </article>
-        <article class="metric-note metric-note--attendance" data-reveal>
-          <span class="metric-note__icon"><i data-lucide="calendar-check"></i></span>
-          <span class="metric-note__label">الحضور المسجل</span>
-          <strong>${attendanceText}</strong>
-          <small>${student.attendance.recordCount ? "من سجلات القيد الدراسي" : "تظهر النسبة بعد تسجيل الحضور"}</small>
-        </article>
-        <article class="metric-note metric-note--results" data-reveal>
-          <span class="metric-note__icon"><i data-lucide="chart-no-axes-column-increasing"></i></span>
-          <span class="metric-note__label">النتائج المنشورة</span>
-          <strong>${student.results.length ? student.results.length.toLocaleString("ar-LY") : "—"}</strong>
-          <small>${student.results.length ? "مواد لها نتائج معتمدة" : "لا توجد نتائج معتمدة حاليًا"}</small>
-        </article>
-      </div>
+function greetingForNow() {
+  const hour = new Date().getHours();
+  if (hour < 11) return "صباحٌ مليء بالبدايات الجميلة.";
+  if (hour < 16) return "نتمنى لك يومًا دراسيًا مليئًا بالاكتشاف.";
+  if (hour < 21) return "مساءٌ هادئ بعد يوم من التعلّم.";
+  return "أهلًا بعودتك إلى مساحتك الدراسية.";
+}
 
-      <div class="portal-home__grid">
-        <article class="portal-section portal-section--schedule" data-reveal>
-          <div class="portal-section__heading"><div><span class="section-index">اليوم الدراسي</span><h2>على جدول اليوم</h2></div><i data-lucide="calendar-days"></i></div>
+function studentAvatar(student, className = "student-avatar") {
+  const initial = student.name.trim().slice(0, 1) || "ط";
+  return `<span class="${className}" aria-hidden="true"><span>${initial}</span><i data-lucide="sparkles"></i></span>`;
+}
+
+function renderProgress(value, label) {
+  const progress = Math.min(100, Math.max(0, Number(value) || 0));
+  return `<div class="study-progress" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span style="--progress:${progress}%"></span></div>`;
+}
+
+function renderPortalHome(student) {
+  const attendancePercent =
+    student.attendance.percent === null
+      ? null
+      : Math.min(100, Math.max(0, student.attendance.percent));
+  const feeTotals = student.feeRecords.reduce(
+    (totals, fee) => ({
+      total: totals.total + fee.total,
+      paid: totals.paid + fee.paid,
+      remaining: totals.remaining + fee.remaining,
+    }),
+    { total: 0, paid: 0, remaining: 0 },
+  );
+  const feeProgress =
+    feeTotals.total > 0 ? (feeTotals.paid / feeTotals.total) * 100 : 0;
+  const classLine = [student.stage, student.grade, student.section]
+    .filter((value) => value && value !== "—")
+    .join(" · ");
+
+  return `
+    <section class="portal-home" aria-label="مساحة الطالب">
+      <article class="student-hero" data-reveal>
+        <div class="student-hero__copy">
+          <span class="student-hero__eyebrow"><i data-lucide="sparkles"></i> مساحتك، على طريقتك</span>
+          <p class="student-hero__greeting">${greetingForNow()}</p>
+          <h2>${student.name}</h2>
+          <p class="student-hero__class">${classLine || "رحلتك الدراسية تبدأ من هنا"}</p>
+          <div class="student-hero__facts">
+            ${student.academicYear !== "—" ? `<span><i data-lucide="calendar-days"></i>${student.academicYear}</span>` : ""}
+            ${student.studentNumber ? `<span><i data-lucide="badge-check"></i>رقم الطالب ${student.studentNumber}</span>` : ""}
+          </div>
+          <button class="hero-profile-link" type="button" data-target="page:profile">اكتشف ملفك الدراسي <i data-lucide="arrow-up-left"></i></button>
+        </div>
+        <div class="student-hero__portrait" aria-hidden="true">
+          <span class="hero-orbit hero-orbit--one" aria-hidden="true"></span>
+          <span class="hero-orbit hero-orbit--two" aria-hidden="true"></span>
+          ${studentAvatar(student, "student-avatar student-avatar--hero")}
+          <span class="hero-planet hero-planet--blue" aria-hidden="true"></span>
+          <span class="hero-planet hero-planet--orange" aria-hidden="true"></span>
+          <span class="hero-portrait-caption"><i data-lucide="book-open-check"></i> رحلتك تتقدّم</span>
+        </div>
+      </article>
+
+      <div class="student-home-grid">
+        <article class="attendance-feature" data-reveal>
+          <header class="feature-heading"><div><span class="feature-kicker">حضورك يصنع الفرق</span><h2>محطة الحضور</h2></div><i data-lucide="calendar-check"></i></header>
+          ${
+            attendancePercent === null
+              ? emptyState(
+                  "calendar-clock",
+                  "لم تُسجّل بيانات الحضور بعد",
+                  "ستظهر مؤشرات حضورك هنا بعد تسجيلها في النظام.",
+                )
+              : `<div class="attendance-orbit-layout">
+                <div class="attendance-orbit" style="--attendance-offset:${100 - attendancePercent}" aria-label="نسبة الحضور ${attendancePercent.toLocaleString("ar-LY")}%">
+                  <svg viewBox="0 0 120 120" aria-hidden="true"><circle class="attendance-orbit__track" cx="60" cy="60" r="50"></circle><circle class="attendance-orbit__value" cx="60" cy="60" r="50" pathLength="100"></circle></svg>
+                  <div><strong>${attendancePercent.toLocaleString("ar-LY")}%</strong><span>نسبة الحضور</span></div>
+                </div>
+                <div class="attendance-counts"><p><span>أيام الحضور</span><strong>${student.attendance.present.toLocaleString("ar-LY")}</strong></p><p><span>مرات التأخر</span><strong>${student.attendance.late.toLocaleString("ar-LY")}</strong></p><p><span>أيام الغياب</span><strong>${student.attendance.absent.toLocaleString("ar-LY")}</strong></p></div>
+              </div>`
+          }
+          <button class="section-jump" type="button" data-target="page:attendance">تفاصيل سجلي <i data-lucide="arrow-up-left"></i></button>
+        </article>
+
+        <article class="day-path" data-reveal>
+          <header class="feature-heading"><div><span class="feature-kicker">خطوات يومك</span><h2>موعد التعلّم</h2></div><i data-lucide="calendar-days"></i></header>
           ${
             student.todayAgenda.length
-              ? `
-            <ol class="today-agenda">${student.todayAgenda
-              .map(
-                (entry, index) => `
-              <li class="agenda-row"><span class="agenda-row__index">${String(index + 1).padStart(2, "0")}</span><span class="agenda-row__time">${entry.time}</span><div><strong>${entry.subject}</strong>${entry.teacher || entry.room ? `<small>${[entry.teacher, entry.room].filter(Boolean).join(" · ")}</small>` : ""}</div></li>
-            `,
-              )
-              .join("")}</ol>
-          `
+              ? `<ol class="day-path__list">${student.todayAgenda.map((entry, index) => `<li style="--path-index:${Math.min(index, 5)}"><span class="day-path__marker">${String(index + 1).toLocaleString("ar-LY", { minimumIntegerDigits: 2 })}</span><time>${entry.time}</time><div><strong>${entry.subject}</strong>${entry.teacher || entry.room ? `<small>${[entry.teacher, entry.room].filter(Boolean).join(" · ")}</small>` : ""}</div></li>`).join("")}</ol>`
               : emptyState(
                   "calendar-clock",
-                  "لا يوجد جدول لليوم",
-                  "إذا نُشر جدول الصف فسيظهر هنا.",
+                  "لا توجد حصص منشورة لهذا اليوم",
+                  "عندما يُنشر جدول الصف ستظهر مواعيدك هنا.",
                 )
           }
-          <button class="text-link" type="button" data-target="page:timetable">الجدول الأسبوعي <i data-lucide="arrow-up-left"></i></button>
+          <button class="section-jump" type="button" data-target="page:timetable">استكشف الأسبوع الدراسي <i data-lucide="arrow-up-left"></i></button>
         </article>
 
-        <article class="portal-section portal-section--results" data-reveal>
-          <div class="portal-section__heading"><div><span class="section-index">المواد</span><h2>آخر النتائج</h2></div><i data-lucide="book-open-check"></i></div>
+        <article class="results-feature" data-reveal>
+          <header class="feature-heading"><div><span class="feature-kicker">ثمرة اجتهادك</span><h2>نتائج معتمدة</h2></div><span class="feature-heading__count">${student.results.length.toLocaleString("ar-LY")} ${student.results.length === 1 ? "مادة" : "مواد"}</span></header>
           ${
             student.results.length
-              ? `
-            <ul class="result-preview">${student.results
-              .slice(0, 4)
-              .map(
-                (result) => `
-              <li><span>${result.subject}</span><strong>${result.percentage === null ? result.grade : `${result.percentage.toLocaleString("ar-LY")}%`}</strong></li>
-            `,
-              )
-              .join("")}</ul>
-          `
+              ? `<ul class="subject-trail">${student.results
+                  .slice(0, 4)
+                  .map(
+                    (result, index) =>
+                      `<li style="--path-index:${index}"><div><strong>${result.subject}</strong><span>${result.percentage === null ? "التقدير المسجل" : `${result.percentage.toLocaleString("ar-LY")}%`}</span></div>${result.percentage === null ? `<span class="grade-token">${result.grade}</span>` : renderProgress(result.percentage, `نتيجة ${result.subject}`)}</li>`,
+                  )
+                  .join("")}</ul>`
               : emptyState(
                   "chart-no-axes-column-increasing",
-                  "لا توجد نتائج معتمدة",
-                  "ستظهر هنا بعد اعتمادها من المدرسة.",
+                  "لا توجد نتائج معتمدة الآن",
+                  "ستجد نتيجتك هنا بعد اعتمادها من المدرسة.",
                 )
           }
-          <button class="text-link" type="button" data-target="page:results">كل النتائج <i data-lucide="arrow-up-left"></i></button>
+          <button class="section-jump" type="button" data-target="page:results">كل النتائج <i data-lucide="arrow-up-left"></i></button>
         </article>
 
-        <article class="portal-section portal-section--fees" data-reveal>
-          <div class="portal-section__heading"><div><span class="section-index">المتابعة المالية</span><h2>الرسوم</h2></div><i data-lucide="wallet"></i></div>
+        <article class="fees-feature" data-reveal>
+          <div class="fees-feature__heading"><span class="fees-feature__icon"><i data-lucide="wallet-cards"></i></span><div><span class="feature-kicker">متابعة القيد</span><h2>الرسوم الدراسية</h2></div></div>
           ${
             student.feeRecords.length
-              ? `
-            <ul class="fee-preview">${student.feeRecords
-              .slice(0, 3)
-              .map(
-                (fee) => `
-              <li><span>${fee.label}</span><strong>${formatAmount(fee.remaining)}</strong><small>${fee.status}</small></li>
-            `,
-              )
-              .join("")}</ul>
-          `
+              ? `<div class="fees-total"><span>المتبقي على البنود المسجلة</span><strong>${formatAmount(feeTotals.remaining)}</strong></div>${renderProgress(feeProgress, "نسبة المبالغ المسددة من إجمالي الرسوم المسجلة")}<div class="fees-feature__meta"><span>المدفوع ${formatAmount(feeTotals.paid)}</span><span>الإجمالي ${formatAmount(feeTotals.total)}</span></div>`
               : emptyState(
                   "wallet",
-                  "لا توجد رسوم مسجلة",
-                  "لا توجد بنود رسوم مرتبطة بهذا القيد حاليًا.",
+                  "لا توجد رسوم مرتبطة بالقيد",
+                  "لا توجد بنود مالية مسجلة لعرضها الآن.",
                 )
           }
-          <button class="text-link" type="button" data-target="page:fees">تفاصيل الرسوم <i data-lucide="arrow-up-left"></i></button>
+          <button class="section-jump" type="button" data-target="page:fees">عرض تفاصيل الرسوم <i data-lucide="arrow-up-left"></i></button>
         </article>
       </div>
     </section>
@@ -891,83 +978,68 @@ function renderPortalHome(student) {
 
 function renderPortalPageMarkup(page, student) {
   if (page === "profile") {
+    const details = [
+      ["المرحلة الدراسية", student.stage],
+      ["الصف", student.grade],
+      ["الشعبة", student.section],
+      ["السنة الدراسية", student.academicYear],
+    ].filter(([, value]) => value && value !== "—");
     return `
-      <section class="portal-page" aria-labelledby="portal-page-title">
-        <header class="portal-page__heading"><span class="section-index">بيانات القيد</span><h2 id="portal-page-title">ملفي الدراسي</h2><p>البيانات الأساسية المرتبطة بحساب الطالب.</p></header>
-        <article class="profile-sheet" data-reveal>
-          <div class="profile-sheet__monogram" aria-hidden="true">${student.name.slice(0, 1)}</div>
-          <div class="profile-sheet__identity"><span>الاسم المسجل</span><h3>${student.name}</h3><p>${student.studentNumber}</p></div>
-          <dl class="profile-details">
-            <div><dt>المرحلة</dt><dd>${student.stage}</dd></div><div><dt>الصف</dt><dd>${student.grade}</dd></div>
-            <div><dt>الشعبة</dt><dd>${student.section}</dd></div><div><dt>السنة الدراسية</dt><dd>${student.academicYear}</dd></div>
-          </dl>
+      <section class="portal-page study-page" aria-labelledby="portal-page-title">
+        <header class="study-page__heading" data-reveal><span class="study-page__eyebrow">هويتك في المدرسة</span><h2 id="portal-page-title">ملفي الدراسي</h2><p>مساحتك التعريفية كما سُجّلت في القيد الدراسي.</p></header>
+        <article class="profile-story" data-reveal>
+          <div class="profile-story__identity">${studentAvatar(student, "student-avatar student-avatar--profile")}<div><span>الاسم المسجل</span><h3>${student.name}</h3><p>${student.studentNumber ? `رقم الطالب ${student.studentNumber}` : ""}</p></div></div>
+          <div class="profile-story__seal" aria-hidden="true"><i data-lucide="school"></i><span>رواد العلم</span></div>
+          ${details.length ? `<dl class="profile-story__details">${details.map(([label, value], index) => `<div style="--path-index:${index}"><dt>${label}</dt><dd>${value}</dd></div>`).join("")}</dl>` : emptyState("user-round", "لا توجد تفاصيل إضافية", "لا تتوفر بيانات صفية أخرى مرتبطة بهذا القيد.")}
         </article>
       </section>
     `;
   }
 
   if (page === "attendance") {
+    const attendancePercent =
+      student.attendance.percent === null
+        ? null
+        : Math.min(100, Math.max(0, student.attendance.percent));
     return `
-      <section class="portal-page" aria-labelledby="portal-page-title">
-        <header class="portal-page__heading"><span class="section-index">سجلات القيد</span><h2 id="portal-page-title">الحضور والغياب</h2><p>أحدث سجلات الحضور المرتبطة بالقيد الدراسي.</p></header>
-        <div class="attendance-stats">
-          <div><span>حاضر</span><strong>${student.attendance.present.toLocaleString("ar-LY")}</strong></div>
-          <div><span>تأخر</span><strong>${student.attendance.late.toLocaleString("ar-LY")}</strong></div>
-          <div><span>غياب</span><strong>${student.attendance.absent.toLocaleString("ar-LY")}</strong></div>
-          <div><span>نسبة الحضور</span><strong>${student.attendance.percent === null ? "—" : `${student.attendance.percent.toLocaleString("ar-LY")}%`}</strong></div>
+      <section class="portal-page study-page" aria-labelledby="portal-page-title">
+        <header class="study-page__heading" data-reveal><span class="study-page__eyebrow">كل يوم هو خطوة</span><h2 id="portal-page-title">الحضور والغياب</h2><p>سجلّك اليومي كما ورد من المدرسة.</p></header>
+        <div class="attendance-overview" data-reveal>
+          <div class="attendance-overview__lead"><span>مؤشر الحضور</span>${attendancePercent === null ? "<strong>بانتظار أول سجل</strong>" : `<strong>${attendancePercent.toLocaleString("ar-LY")}<small>%</small></strong>`}<p>${attendancePercent === null ? "لا توجد سجلات حضور مرتبطة بالقيد حتى الآن." : `مبني على ${student.attendance.recordCount.toLocaleString("ar-LY")} سجلًا دراسيًا.`}</p></div>
+          <div class="attendance-overview__counts"><div><i data-lucide="circle-check"></i><span>حضور</span><strong>${student.attendance.present.toLocaleString("ar-LY")}</strong></div><div><i data-lucide="clock-3"></i><span>تأخر</span><strong>${student.attendance.late.toLocaleString("ar-LY")}</strong></div><div><i data-lucide="circle-minus"></i><span>غياب</span><strong>${student.attendance.absent.toLocaleString("ar-LY")}</strong></div></div>
         </div>
-        ${
-          student.attendanceRecords.length
-            ? `
-          <div class="data-table-wrap" data-reveal><table class="data-table"><thead><tr><th scope="col">التاريخ</th><th scope="col">الحالة</th><th scope="col">ملاحظة</th></tr></thead><tbody>
-            ${student.attendanceRecords.map((entry) => `<tr><td data-label="التاريخ">${entry.date}</td><td data-label="الحالة"><span class="status-label">${entry.status}</span></td><td data-label="ملاحظة">${entry.lateMinutes ? `${entry.lateMinutes.toLocaleString("ar-LY")} دقيقة تأخير` : "—"}</td></tr>`).join("")}
-          </tbody></table></div>
-        `
-            : emptyState(
-                "calendar-x-2",
-                "لا توجد سجلات حضور",
-                "عند تسجيل بيانات الحضور للقيد ستظهر هنا.",
-              )
-        }
+        <section class="attendance-journal" aria-label="أحدث سجلات الحضور"><header class="feature-heading"><div><span class="feature-kicker">من الأحدث إلى الأقدم</span><h3>دفتر الأيام</h3></div><i data-lucide="notebook-tabs"></i></header>
+          ${student.attendanceRecords.length ? `<ol class="attendance-journal__list">${student.attendanceRecords.map((entry, index) => `<li style="--path-index:${Math.min(index, 5)}"><time>${entry.date}</time><span class="attendance-journal__status"><i data-lucide="${entry.lateMinutes ? "clock-3" : "calendar-check"}"></i>${entry.status}</span>${entry.lateMinutes ? `<small>تأخر ${entry.lateMinutes.toLocaleString("ar-LY")} دقيقة</small>` : ""}</li>`).join("")}</ol>` : emptyState("calendar-x-2", "دفتر الحضور فارغ حاليًا", "ستظهر هنا السجلات فور تسجيلها للقيد الدراسي.")}
+        </section>
       </section>
     `;
   }
 
   if (page === "results") {
     return `
-      <section class="portal-page" aria-labelledby="portal-page-title">
-        <header class="portal-page__heading"><span class="section-index">بعد الاعتماد</span><h2 id="portal-page-title">النتائج والتقييمات</h2><p>لا تعرض البوابة إلا النتائج المعتمدة من المدرسة.</p></header>
-        ${
-          student.results.length
-            ? `
-          <div class="data-table-wrap" data-reveal><table class="data-table"><thead><tr><th scope="col">المادة</th><th scope="col">التقدير</th><th scope="col">النسبة</th></tr></thead><tbody>
-            ${student.results.map((result) => `<tr><td data-label="المادة">${result.subject}</td><td data-label="التقدير"><span class="grade-mark">${result.grade}</span></td><td data-label="النسبة">${result.percentage === null ? "—" : `${result.percentage.toLocaleString("ar-LY")}%`}</td></tr>`).join("")}
-          </tbody></table></div>
-        `
-            : emptyState(
-                "chart-no-axes-column-increasing",
-                "لا توجد نتائج معتمدة بعد",
-                "عندما تعتمد المدرسة نتائج الطالب ستظهر في هذا القسم.",
-              )
-        }
+      <section class="portal-page study-page" aria-labelledby="portal-page-title">
+        <header class="study-page__heading" data-reveal><span class="study-page__eyebrow">ثمار التعلّم</span><h2 id="portal-page-title">النتائج والتقييمات</h2><p>تظهر هنا نتائجك التي اعتمدتها المدرسة فقط.</p></header>
+        ${student.results.length ? `<div class="results-atlas">${student.results.map((result, index) => `<article class="result-island" data-reveal style="--path-index:${Math.min(index, 5)}"><span class="result-island__index">${String(index + 1).toLocaleString("ar-LY", { minimumIntegerDigits: 2 })}</span><div class="result-island__subject"><span>المادة</span><h3>${result.subject}</h3></div><div class="result-island__score">${result.percentage === null ? `<span>التقدير</span><strong class="grade-token">${result.grade}</strong>` : `<span>النتيجة المعتمدة</span><strong>${result.percentage.toLocaleString("ar-LY")}<small>%</small></strong>${renderProgress(result.percentage, `نتيجة ${result.subject}`)}`}</div></article>`).join("")}</div>` : emptyState("chart-no-axes-column-increasing", "لا توجد نتائج معتمدة بعد", "ستظهر نتائجك هنا عندما تعتمدها المدرسة.")}
       </section>
     `;
   }
 
   if (page === "fees") {
     return `
-      <section class="portal-page" aria-labelledby="portal-page-title">
-        <header class="portal-page__heading"><span class="section-index">بيانات القيد</span><h2 id="portal-page-title">الرسوم والمستحقات</h2><p>ملخص بنود الرسوم المرتبطة بالقيد الدراسي.</p></header>
+      <section class="portal-page study-page" aria-labelledby="portal-page-title">
+        <header class="study-page__heading" data-reveal><span class="study-page__eyebrow">تفاصيل القيد</span><h2 id="portal-page-title">الرسوم والمستحقات</h2><p>متابعة واضحة لبنود الرسوم المسجلة على القيد.</p></header>
         ${
           student.feeRecords.length
-            ? `
-          <div class="data-table-wrap" data-reveal><table class="data-table"><thead><tr><th scope="col">البند</th><th scope="col">الإجمالي</th><th scope="col">المدفوع</th><th scope="col">المتبقي</th><th scope="col">الحالة</th></tr></thead><tbody>
-            ${student.feeRecords.map((fee) => `<tr><td data-label="البند">${fee.label}</td><td data-label="الإجمالي">${formatAmount(fee.total)}</td><td data-label="المدفوع">${formatAmount(fee.paid)}</td><td data-label="المتبقي"><strong>${formatAmount(fee.remaining)}</strong></td><td data-label="الحالة"><span class="status-label">${fee.status}</span></td></tr>`).join("")}
-          </tbody></table></div>
-        `
+            ? `<div class="fee-ledger">${student.feeRecords
+                .map((fee, index) => {
+                  const progress =
+                    fee.total > 0 ? (fee.paid / fee.total) * 100 : 0;
+                  return `<article class="fee-entry" data-reveal style="--path-index:${Math.min(index, 5)}"><div class="fee-entry__title"><span class="fee-entry__number">${String(index + 1).toLocaleString("ar-LY", { minimumIntegerDigits: 2 })}</span><div><h3>${fee.label}</h3><span class="fee-entry__status">${fee.status}</span></div></div><div class="fee-entry__amounts"><p><span>الإجمالي</span><strong>${formatAmount(fee.total)}</strong></p><p><span>المدفوع</span><strong>${formatAmount(fee.paid)}</strong></p><p><span>المتبقي</span><strong>${formatAmount(fee.remaining)}</strong></p></div>${renderProgress(progress, `نسبة السداد لبند ${fee.label}`)}</article>`;
+                })
+                .join("")}</div>`
             : emptyState(
                 "wallet",
-                "لا توجد بنود رسوم",
+                "لا توجد بنود رسوم مسجلة",
                 "لا توجد رسوم مرتبطة بهذا القيد في الوقت الحالي.",
               )
         }
@@ -977,33 +1049,15 @@ function renderPortalPageMarkup(page, student) {
 
   if (page === "timetable") {
     return `
-      <section class="portal-page" aria-labelledby="portal-page-title">
-        <header class="portal-page__heading"><span class="section-index">العام الدراسي ${student.academicYear}</span><h2 id="portal-page-title">الجدول الدراسي</h2><p>الحصص المنشورة للصف المرتبط بالقيد.</p></header>
-        ${
-          student.timetable.length
-            ? `
-          <div class="week-schedule">${student.timetable
-            .map(
-              (day, index) => `
-            <article class="day-sheet" data-reveal style="--entry-index:${index}"><header><span>${String(day.day_number + 1).padStart(2, "0")}</span><h3>${day.day}</h3></header><ol>
-              ${day.lessons.map((lesson) => `<li><time>${lesson.time}</time><div><strong>${lesson.subject}</strong><small>${[lesson.period, lesson.teacher, lesson.room].filter(Boolean).join(" · ")}</small></div></li>`).join("")}
-            </ol></article>
-          `,
-            )
-            .join("")}</div>
-        `
-            : emptyState(
-                "calendar-days",
-                "لم يُنشر جدول الصف بعد",
-                "سيظهر الجدول هنا عندما يُضاف إلى النظام.",
-              )
-        }
+      <section class="portal-page study-page" aria-labelledby="portal-page-title">
+        <header class="study-page__heading" data-reveal><span class="study-page__eyebrow">${student.academicYear !== "—" ? `العام الدراسي ${student.academicYear}` : "إيقاع الأسبوع"}</span><h2 id="portal-page-title">جدولي الدراسي</h2><p>مواعيد الحصص المنشورة للصف المرتبط بقيدك.</p></header>
+        ${student.timetable.length ? `<div class="week-ribbon">${student.timetable.map((day, index) => `<article class="week-ribbon__day ${Number(day.day_number) === new Date().getDay() ? "is-today" : ""}" data-reveal style="--path-index:${Math.min(index, 5)}"><header><span>${String(day.day_number + 1).toLocaleString("ar-LY", { minimumIntegerDigits: 2 })}</span><h3>${day.day}</h3>${Number(day.day_number) === new Date().getDay() ? "<small>اليوم</small>" : ""}</header><ol>${day.lessons.map((lesson) => `<li><time>${lesson.time}</time><div><strong>${lesson.subject}</strong><small>${[lesson.period, lesson.teacher, lesson.room].filter(Boolean).join(" · ")}</small></div><i data-lucide="move-up-left"></i></li>`).join("")}</ol></article>`).join("")}</div>` : emptyState("calendar-days", "لم يُنشر جدول الصف بعد", "سيظهر جدولك هنا عندما تضيف المدرسة الحصص إلى النظام.")}
       </section>
     `;
   }
 
   if (page === "platforms") {
-    return `<section class="portal-page" aria-labelledby="portal-page-title"><header class="portal-page__heading"><span class="section-index">موارد الطالب</span><h2 id="portal-page-title">الروابط التعليمية</h2><p>روابط الوصول التي تضيفها المدرسة للحساب.</p></header>${emptyState("link-2", "لا توجد روابط مهيأة", "لم تُربط منصات تعليمية بهذا الحساب حتى الآن.")}</section>`;
+    return `<section class="portal-page study-page" aria-labelledby="portal-page-title"><header class="study-page__heading" data-reveal><span class="study-page__eyebrow">مساحات التعلّم</span><h2 id="portal-page-title">روابطي التعليمية</h2><p>الخدمات التي تربطها المدرسة بحسابك.</p></header><div class="platform-space" data-reveal><span><i data-lucide="link-2"></i></span>${emptyState("book-open", "لا توجد روابط تعليمية مهيأة", "لم تُضف المدرسة روابط خدمات تعليمية لهذا الحساب بعد.")}</div></section>`;
   }
 
   return renderPortalHome(student);
@@ -1013,36 +1067,33 @@ function renderStudentPortal() {
   const student = state.student;
   const activePage = state.activePanel || "home";
   const activeCard = localPageCards.find((card) => card.page === activePage);
-  const title = activeCard?.label || "ملخصي";
+  const title = activeCard?.label || "مساحتي";
   return `
     <div class="student-shell">
-      <aside class="portal-sidebar" aria-label="قائمة بوابة الطالب">
-        <a class="portal-brand" href="#home" data-target="student-dashboard"><img src="assets/logo.png" alt="" width="46" height="46" /><span><strong>${schoolProfile.shortName}</strong><small>بوابة الطالب</small></span></a>
-        <span class="portal-sidebar__label">مساحتي</span>
+      <aside class="portal-sidebar" aria-label="بوابة الطالب">
+        <a class="portal-brand" href="#home" data-target="student-dashboard"><img src="assets/logo.png" alt="" width="46" height="46" /><span><strong>${schoolProfile.shortName}</strong><small>بوابتك المدرسية</small></span></a>
+        <div class="portal-sidebar__student">${studentAvatar(student, "student-avatar student-avatar--sidebar")}<span><strong>${student.name}</strong><small>${student.grade !== "—" ? student.grade : "طالب"}${student.section !== "—" ? ` · ${student.section}` : ""}</small></span></div>
+        <span class="portal-sidebar__label">مساحات التعلّم</span>
         <nav class="portal-nav" aria-label="أقسام البوابة">
           ${localPageCards
             .map(
               (card) => `
             <button class="portal-nav__item ${activePage === card.page ? "is-active" : ""}" type="button" data-target="page:${card.page}" ${activePage === card.page ? 'aria-current="page"' : ""}>
-              <i data-lucide="${card.icon}"></i><span>${card.label}</span>
+              <i data-lucide="${card.icon}"></i><span>${card.label}</span>${activePage === card.page ? '<i class="portal-nav__active-mark" data-lucide="arrow-left"></i>' : ""}
             </button>
           `,
             )
             .join("")}
         </nav>
-        <div class="portal-sidebar__bottom"><a href="mailto:${schoolProfile.email}"><i data-lucide="circle-help"></i><span>مساعدة</span></a><button class="portal-logout" type="button" data-target="logout"><i data-lucide="log-out"></i><span>تسجيل الخروج</span></button></div>
+        <div class="portal-sidebar__bottom"><a href="mailto:${schoolProfile.email}"><i data-lucide="circle-help"></i><span>تواصل مع المدرسة</span></a><button class="portal-logout" type="button" data-target="logout"><i data-lucide="log-out"></i><span>تسجيل الخروج</span></button></div>
       </aside>
       <main class="student-main">
         <header class="student-topbar">
-          <div><span class="section-index">${title}</span><h1>${activePage === "home" ? "مساحتك الدراسية" : title}</h1></div>
-          <div class="student-topbar__actions"><span class="today-date"><i data-lucide="calendar-days"></i>${new Date().toLocaleDateString("ar-LY", { weekday: "long", day: "numeric", month: "long" })}</span><button class="icon-button student-topbar__logout" type="button" data-target="logout" aria-label="تسجيل الخروج"><i data-lucide="log-out"></i></button></div>
+          <div class="student-topbar__title"><span class="section-index">${activePage === "home" ? "مساحتك الرقمية" : title}</span><h1>${activePage === "home" ? "بوابتك إلى يومٍ دراسي أجمل" : title}</h1></div>
+          <div class="student-topbar__actions"><span class="today-date"><i data-lucide="calendar-days"></i>${new Date().toLocaleDateString("ar-LY", { weekday: "long", day: "numeric", month: "long" })}</span><button class="student-topbar__logout" type="button" data-target="logout"><i data-lucide="log-out"></i><span>خروج آمن</span></button></div>
         </header>
-        <section class="student-identity" aria-label="هوية الطالب">
-          <div class="student-identity__monogram" aria-hidden="true">${student.name.slice(0, 1)}</div>
-          <div class="student-identity__copy"><strong>${student.name}</strong><span>${student.stage} <b>·</b> ${student.grade} <b>·</b> ${student.section}</span></div>
-          <div class="student-identity__year"><span>السنة الدراسية</span><strong>${student.academicYear}</strong></div>
-        </section>
-        ${renderPortalPageMarkup(activePage, student)}
+        <div class="student-content" data-portal-view>${renderPortalPageMarkup(activePage, student)}</div>
+        <footer class="student-footer"><span>${schoolProfile.shortName}</span><span>مساحتك الدراسية، في مكان واحد</span></footer>
       </main>
     </div>
   `;
