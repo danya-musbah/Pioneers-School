@@ -19,9 +19,14 @@ function pose(characterId, poseName) {
 export function normalizeStudentGender(value) {
   const gender = String(value ?? "")
     .trim()
+    .replace(/\s+/g, "")
+    .normalize("NFKC")
     .toLowerCase();
-  if (gender === "male") return "male";
-  if (gender === "female") return "female";
+
+  if (["male", "m", "ذكر", "ولد", "boy"].includes(gender)) return "male";
+  if (["female", "f", "أنثى", "انثى", "بنت", "girl"].includes(gender))
+    return "female";
+
   return "unknown";
 }
 

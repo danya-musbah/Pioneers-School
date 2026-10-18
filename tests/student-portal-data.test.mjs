@@ -5,6 +5,7 @@ import {
   buildTimetableGrid,
   mapPortalData,
 } from "../js/student-portal-data.mjs";
+import { normalizeStudentGender } from "../js/student-artwork.js";
 
 const currentSunday = new Date(2026, 9, 18, 12);
 
@@ -209,6 +210,15 @@ test("the SQL projection uses the current identity and class-subject relation wi
     hardening,
     /grant execute on function public\.student_portal_data\(\) to authenticated/,
   );
+});
+
+test("normalizes Arabic and short-form gender values used by student records", () => {
+  assert.equal(normalizeStudentGender("ذكر"), "male");
+  assert.equal(normalizeStudentGender("أنثى"), "female");
+  assert.equal(normalizeStudentGender("انثى"), "female");
+  assert.equal(normalizeStudentGender("m"), "male");
+  assert.equal(normalizeStudentGender("F"), "female");
+  assert.equal(normalizeStudentGender("unknown"), "unknown");
 });
 
 test("student photos are signed from the private project bucket and never returned as arbitrary URLs", async () => {

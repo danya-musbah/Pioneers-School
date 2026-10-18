@@ -1086,19 +1086,6 @@ async function logout() {
   renderApp();
 }
 
-function revealActivePortalNavItem() {
-  if (!window.matchMedia("(max-width: 880px)").matches) return;
-  const activeItem = app.querySelector(".portal-nav__item.is-active");
-  if (!activeItem?.getClientRects().length) return;
-  activeItem.scrollIntoView({
-    block: "nearest",
-    inline: "nearest",
-    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-      ? "auto"
-      : "smooth",
-  });
-}
-
 function renderApp() {
   app.classList.add("motion-ready");
   if (state.page === "student" && state.loggedIn && state.student) {
@@ -1110,7 +1097,6 @@ function renderApp() {
   }
   refreshIcons();
   observeReveals();
-  revealActivePortalNavItem();
 }
 
 function renderPublicLanding() {
