@@ -7,12 +7,17 @@ import {
   schoolIconConstellations,
 } from "./data.js";
 import { getSupabaseClient, hasSupabaseConfig } from "./supabase-client.js";
+import { supabaseConfig } from "./supabase-config.js";
 import {
   normalizeStudentGender,
   studentArtwork,
   studentArtworkInventory,
   studentPortraitFallbacks,
 } from "./student-artwork.js";
+import {
+  buildTimetableGrid,
+  mapPortalData as normalizeStudentPortalData,
+} from "./student-portal-data.mjs";
 
 const app = document.getElementById("app");
 const state = {
@@ -320,98 +325,7 @@ function renderIconConstellation(icons, variant) {
 }
 
 function mapPortalData(data) {
-  const source = data?.student ?? {};
-  const attendance = data?.attendance ?? {};
-  const attendanceRecords = Array.isArray(attendance.records)
-    ? attendance.records
-    : [];
-  const results = Array.isArray(data?.results) ? data.results : [];
-  const feeRecords = Array.isArray(data?.fees) ? data.fees : [];
-  const timetable = Array.isArray(data.timetable) ? data.timetable : [];
-  const dayGroups = new Map();
-
-  timetable.forEach((entry) => {
-    const dayNumber = Number(entry.day_number);
-    const startTime =
-      typeof entry.start_time === "string" ? entry.start_time.slice(0, 5) : "—";
-    const endTime =
-      typeof entry.end_time === "string" ? entry.end_time.slice(0, 5) : "";
-    if (!dayGroups.has(dayNumber)) {
-      dayGroups.set(dayNumber, {
-        day_number: dayNumber,
-        day: escapeHTML(entry.day || "غير محدد"),
-        lessons: [],
-      });
-    }
-    dayGroups.get(dayNumber).lessons.push({
-      period: escapeHTML(entry.period || "حصة"),
-      time: `${startTime === "—" ? startTime : escapeHTML(startTime)}${endTime ? `–${escapeHTML(endTime)}` : ""}`,
-      subject: escapeHTML(entry.subject || "مادة دراسية"),
-      teacher: escapeHTML(entry.teacher || ""),
-      room: escapeHTML(entry.room || ""),
-    });
-  });
-
-  return {
-    name: escapeHTML(source.full_name),
-    studentNumber: escapeHTML(source.student_number),
-    stage: escapeHTML(source.stage || "—"),
-    grade: escapeHTML(source.grade || "—"),
-    section: escapeHTML(source.section || "—"),
-    academicYear: escapeHTML(source.academic_year || "—"),
-    attendance: {
-      present: Number(attendance.present ?? 0),
-      late: Number(attendance.late ?? 0),
-      absent: Number(attendance.absent ?? 0),
-      recordCount: attendanceRecords.length,
-      percent: attendanceRecords.length
-        ? Number(attendance.percent ?? 0)
-        : null,
-    },
-    attendanceRecords: attendanceRecords.map((record) => {
-      const item = record && typeof record === "object" ? record : {};
-      return {
-        date: escapeHTML(item.date),
-        status: escapeHTML(item.status || "غير محدد"),
-        lateMinutes: Number(item.minutes_late ?? 0),
-      };
-    }),
-    results: results.map((result) => {
-      const item = result && typeof result === "object" ? result : {};
-      return {
-        subject: escapeHTML(item.subject || "مادة دراسية"),
-        grade: escapeHTML(item.grade || "—"),
-        percentage:
-          item.percentage === null || item.percentage === undefined
-            ? null
-            : Number(item.percentage),
-      };
-    }),
-    feeRecords: feeRecords.map((fee) => {
-      const item = fee && typeof fee === "object" ? fee : {};
-      return {
-        label: escapeHTML(item.label || "رسوم دراسية"),
-        status: escapeHTML(item.status || "غير محدد"),
-        total: Number(item.total ?? 0),
-        paid: Number(item.paid ?? 0),
-        remaining: Number(item.remaining ?? 0),
-      };
-    }),
-    timetable: [...dayGroups.values()],
-    todayAgenda: timetable
-      .filter((entry) => Number(entry.day_number) === new Date().getDay())
-      .map((entry) => ({
-        time: escapeHTML(
-          typeof entry.start_time === "string"
-            ? entry.start_time.slice(0, 5)
-            : "—",
-        ),
-        subject: escapeHTML(entry.subject || "حصة"),
-        teacher: escapeHTML(entry.teacher || ""),
-        room: escapeHTML(entry.room || ""),
-      })),
-    platforms: [],
-  };
+  return normalizeStudentPortalData(data);
 }
 
 async function loadStudentPortal(client) {
@@ -444,7 +358,17 @@ async function loadStudentPortal(client) {
     logPortalDiagnostic("student_portal_mapping", error);
     throw new Error("student_portal:data_mapping_failed");
   }
-  student.gender = "unknown";
+  if (
+    /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname) &&
+    (student.timetableIssues.missingSubject ||
+      student.timetableIssues.unplacedLesson)
+  ) {
+    console.warn("[student-portal] Timetable rows need data review", {
+      missingSubjectCount: student.timetableIssues.missingSubject,
+      unplacedLessonCount: student.timetableIssues.unplacedLesson,
+    });
+  }
+  student.gender = normalizeStudentGender(student.gender);
   student.photoUrl = null;
   student.hasPhotoReference = false;
   return student;
@@ -485,19 +409,24 @@ function studentPortalFailureMessage(error) {
 function safeStudentPhotoUrl(value) {
   if (typeof value !== "string" || !value.trim()) return null;
   const candidate = value.trim();
-  if (!/^https?:\/\//i.test(candidate)) return null;
   try {
     const url = new URL(candidate);
-    if (url.protocol === "https:") return url.href;
-    if (url.origin === window.location.origin) return url.href;
+    const projectUrl = new URL(supabaseConfig.url);
+    if (
+      url.protocol === "https:" &&
+      url.origin === projectUrl.origin &&
+      /^\/storage\/v1\/object\/sign\/photos\//.test(url.pathname)
+    ) {
+      return url.href;
+    }
   } catch {
     return null;
   }
   return null;
 }
 
-async function hydrateStudentPhoto(client, student) {
-  if (!student?.hasPhotoReference) return;
+async function hydrateStudentPhoto(client, student, isRefresh = false) {
+  if (!student?.hasPhotoReference) return false;
   try {
     const { data, error } = await withRequestTimeout(
       (signal) => client.functions.invoke("student-avatar", { signal }),
@@ -508,7 +437,7 @@ async function hydrateStudentPhoto(client, student) {
         "student_avatar",
         diagnosticError("student_portal:avatar_request_failed", error),
       );
-      return;
+      return false;
     }
     const signedUrl = safeStudentPhotoUrl(data?.image_url);
     if (!signedUrl) {
@@ -516,12 +445,13 @@ async function hydrateStudentPhoto(client, student) {
         "student_avatar",
         new Error("student_portal:avatar_url_unavailable"),
       );
-      return;
+      return false;
     }
-    if (state.student !== student) return;
+    if (state.student !== student) return false;
     student.photoUrl = signedUrl;
     app.querySelectorAll("[data-student-portrait]").forEach((image) => {
       image.dataset.fallbackApplied = "false";
+      if (!isRefresh) image.dataset.photoRefreshAttempted = "false";
       image
         .closest(".student-photo-frame")
         ?.classList.remove("is-image-unavailable");
@@ -538,9 +468,11 @@ async function hydrateStudentPhoto(client, student) {
       image.alt = "الصورة الشخصية للطالب";
       image.src = signedUrl;
     });
+    return true;
   } catch (error) {
     // Keep the local gender-specific portrait when signing is unavailable.
     logPortalDiagnostic("student_avatar", error);
+    return false;
   }
 }
 
@@ -556,11 +488,9 @@ async function hydrateStudentIdentity(client, student) {
 
     const identity = data?.student ?? null;
     student.gender = normalizeStudentGender(identity?.gender);
-    student.photoUrl = identity
-      ? [identity.avatar_path, identity.photo_path]
-          .map(safeStudentPhotoUrl)
-          .find(Boolean) || null
-      : null;
+    // Stored paths are never rendered directly; the Edge Function signs only
+    // a path resolved from this authenticated student's identity.
+    student.photoUrl = null;
     student.hasPhotoReference = Boolean(
       identity &&
       [
@@ -581,18 +511,16 @@ async function hydrateStudentIdentity(client, student) {
     app.querySelectorAll("[data-student-portrait]").forEach((image) => {
       image.dataset.fallbackSrc = fallback;
       image.dataset.fallbackAlt = fallbackAlt;
-      image.dataset.fallbackApplied = String(!student.photoUrl);
+      image.dataset.fallbackApplied = "true";
+      image.dataset.photoRefreshAttempted = "false";
       image
         .closest(".student-photo-frame")
-        ?.setAttribute(
-          "data-avatar-kind",
-          student.photoUrl ? "personal" : student.gender,
-        );
-      image.alt = student.photoUrl ? "الصورة الشخصية للطالب" : fallbackAlt;
-      image.src = student.photoUrl || fallback;
+        ?.setAttribute("data-avatar-kind", student.gender);
+      image.alt = fallbackAlt;
+      image.src = fallback;
     });
 
-    if (!student.photoUrl && student.hasPhotoReference) {
+    if (student.hasPhotoReference) {
       await hydrateStudentPhoto(client, student);
     }
   } catch (error) {
@@ -1555,6 +1483,33 @@ function handleStudentPortraitError(event) {
     !image.matches("[data-student-portrait]")
   )
     return;
+  const student = state.student;
+  const frame = image.closest(".student-photo-frame");
+  if (
+    frame?.dataset.avatarKind === "personal" &&
+    image.dataset.photoRefreshAttempted !== "true" &&
+    student?.hasPhotoReference
+  ) {
+    image.dataset.photoRefreshAttempted = "true";
+    logPortalDiagnostic(
+      "student_portrait_load",
+      new Error("student_portal:portrait_load_failed"),
+    );
+    void getSupabaseClient()
+      .then(async (client) =>
+        client ? hydrateStudentPhoto(client, student, true) : false,
+      )
+      .then((refreshed) => {
+        if (!refreshed && image.isConnected) {
+          handleStudentPortraitError({ target: image });
+        }
+      })
+      .catch((error) => {
+        logPortalDiagnostic("student_avatar_refresh", error);
+        if (image.isConnected) handleStudentPortraitError({ target: image });
+      });
+    return;
+  }
   const fallback = image.dataset.fallbackSrc;
   if (image.dataset.fallbackApplied !== "true" && fallback) {
     image.dataset.fallbackApplied = "true";
@@ -1661,7 +1616,7 @@ function renderPortalHome(student) {
           <header class="feature-heading"><div><span class="feature-kicker">خطوات يومك</span><h2>موعد التعلّم</h2></div>${student.todayAgenda.length ? studentArtworkImage(studentArtwork.home.schedule.active, "feature-heading__art") : ""}<i data-lucide="calendar-days"></i></header>
           ${
             student.todayAgenda.length
-              ? `<ol class="day-path__list">${student.todayAgenda.map((entry, index) => `<li style="--path-index:${Math.min(index, 5)}"><span class="day-path__marker">${String(index + 1).toLocaleString("ar-LY", { minimumIntegerDigits: 2 })}</span><time>${entry.time}</time><div><strong>${entry.subject}</strong>${entry.teacher || entry.room ? `<small>${[entry.teacher, entry.room].filter(Boolean).join(" · ")}</small>` : ""}</div></li>`).join("")}</ol>`
+              ? `<ol class="day-path__list">${student.todayAgenda.map((entry, index) => `<li style="--path-index:${Math.min(index, 5)}"><span class="day-path__marker">${String(index + 1).toLocaleString("ar-LY", { minimumIntegerDigits: 2 })}</span><time>${entry.time}</time><div><strong>${entry.subject || "اسم المادة غير مسجل"}</strong>${entry.teacher || entry.room ? `<small>${[entry.teacher, entry.room].filter(Boolean).join(" · ")}</small>` : ""}</div></li>`).join("")}</ol>`
               : emptyState(
                   "calendar-clock",
                   "لا توجد حصص منشورة لهذا اليوم",
@@ -1714,19 +1669,113 @@ function renderPortalHome(student) {
 
 function renderPortalPageMarkup(page, student) {
   if (page === "profile") {
-    const details = [
-      ["المرحلة الدراسية", student.stage],
-      ["الصف", student.grade],
-      ["الشعبة", student.section],
-      ["السنة الدراسية", student.academicYear],
-    ].filter(([, value]) => value && value !== "—");
+    const genderValue = String(student.gender || "").toLowerCase();
+    const genderLabel = ["male", "m", "ذكر"].includes(genderValue)
+      ? "ذكر"
+      : ["female", "f", "أنثى", "انثى"].includes(genderValue)
+        ? "أنثى"
+        : "";
+    const translateStatus = (value) =>
+      ({
+        active: "نشط",
+        at_school: "في المدرسة",
+        in_progress: "مستمر",
+      })[value] || value;
+    const sections = [
+      {
+        title: "البيانات الشخصية",
+        fields: [
+          ["رقم الطالب", student.studentNumber],
+          ["رقم الملف", student.fileNumber],
+          ["رقم القيد", student.registrationNumber],
+          ["الاسم بالإنجليزية", student.fullNameEnglish],
+          ["الاسم الأول", student.firstName],
+          ["اسم الأب", student.fatherName],
+          ["اسم الجد", student.grandfatherName],
+          ["اسم العائلة", student.familyName],
+          ["اسم الأم", student.motherName],
+          ["اسم أقرب الأقرباء", student.nearestRelativeName],
+          ["صلة القرابة", student.nearestRelativeRelationship],
+          ["الجنس", genderLabel],
+          ["الرقم الوطني", student.nationalId],
+          ["الجنسية", student.nationality],
+          ["الديانة", student.religion],
+          ["هاتف الطالب", student.phone],
+        ],
+      },
+      {
+        title: "بيانات الميلاد",
+        fields: [
+          ["تاريخ الميلاد", student.dateOfBirth],
+          ["مكان الميلاد", student.placeOfBirth],
+        ],
+      },
+      {
+        title: "البيانات الدراسية",
+        fields: [
+          ["المرحلة الدراسية", student.stage],
+          ["الصف", student.grade],
+          ["الشعبة", student.section],
+          ["السنة الدراسية", student.academicYear],
+          ["رقم الطالب في الصف", student.rollNumber],
+          ["نتيجة القيد", translateStatus(student.outcome)],
+          ["المدرسة السابقة", student.previousSchool],
+        ],
+      },
+      {
+        title: "بيانات التسجيل والقيد الحالي",
+        fields: [
+          ["تاريخ تسجيل الطالب", student.registrationDate],
+          ["تاريخ القيد الدراسي", student.enrollmentDate],
+          ["تاريخ التخرج", student.graduationDate],
+          ["نوع القيد", student.admissionType],
+          ["حالة القيد الدراسي", translateStatus(student.enrollmentStatus)],
+          ["الحالة التعليمية", translateStatus(student.educationalStatus)],
+          ["حالة الملف", translateStatus(student.fileStatus)],
+          [
+            "طالب مستجد",
+            student.isNewStudent === null
+              ? ""
+              : student.isNewStudent
+                ? "نعم"
+                : "لا",
+          ],
+          [
+            "إعادة صف",
+            student.isRepeat === null ? "" : student.isRepeat ? "نعم" : "لا",
+          ],
+        ],
+      },
+      {
+        title: "العنوان",
+        fields: [
+          ["عنوان الطالب", student.address],
+          ["عنوان السكن", student.residenceAddress],
+          ["المدينة", student.city],
+          ["المنطقة", student.region],
+        ],
+      },
+    ];
+    const visibleSections = sections
+      .map(({ title, fields }) => ({
+        title,
+        fields: fields.filter(
+          ([, value]) =>
+            value !== null &&
+            value !== undefined &&
+            String(value).trim() !== "" &&
+            !/^(null|undefined)$/i.test(String(value).trim()),
+        ),
+      }))
+      .filter((section) => section.fields.length);
+
     return `
       <section class="portal-page study-page" aria-labelledby="portal-page-title">
         ${renderStudyPageHeading("هويتك في المدرسة", "ملفي الدراسي", "مساحتك التعريفية كما سُجّلت في القيد الدراسي.", studentArtwork.pages.profile, studentFloatingIcons.welcome)}
         <article class="profile-story" data-reveal>
           <div class="profile-story__identity">${studentPortraitMarkup(student, "profile")}<div><span>الاسم المسجل</span><h3>${student.name}</h3><p>${student.studentNumber ? `رقم الطالب ${student.studentNumber}` : ""}</p></div></div>
           <div class="profile-story__seal" aria-hidden="true"><i data-lucide="school"></i><span>رواد العلم</span></div>
-          ${details.length ? `<dl class="profile-story__details">${details.map(([label, value], index) => `<div style="--path-index:${index}"><dt>${label}</dt><dd>${value}</dd></div>`).join("")}</dl>` : emptyState("user-round", "لا توجد تفاصيل إضافية", "لا تتوفر بيانات صفية أخرى مرتبطة بهذا القيد.")}
+          ${visibleSections.length ? visibleSections.map((section) => `<section class="profile-story__section"><h3>${section.title}</h3><dl class="profile-story__details">${section.fields.map(([label, value], index) => `<div style="--path-index:${Math.min(index, 5)}"><dt>${label}</dt><dd>${value}</dd></div>`).join("")}</dl></section>`).join("") : emptyState("user-round", "لا توجد بيانات إضافية مسجلة", "لم تُسجل بيانات أخرى لعرضها في ملف الطالب.")}
         </article>
       </section>
     `;
@@ -1797,10 +1846,39 @@ function renderPortalPageMarkup(page, student) {
     const timetableIllustration = student.timetable.length
       ? studentArtwork.pages.timetable.active
       : null;
+    const timetableGrid = buildTimetableGrid(student);
+    const currentDay = new Date().getDay();
+    const rows = timetableGrid.rows
+      .map(
+        (day) => `
+        <tr>
+          <th scope="row" class="timetable-grid__day ${day.day_number === currentDay ? "is-today" : ""}">${day.day}</th>
+          ${day.cells
+            .map(
+              ({ period, lessons }) => `
+            <td class="timetable-grid__cell ${day.day_number === currentDay ? "is-today" : ""}">
+              ${lessons.length ? lessons.map((lesson) => `<div class="timetable-grid__lesson"><strong>${lesson.subject || "اسم المادة غير مسجل"}</strong>${lesson.teacher ? `<span>${lesson.teacher}</span>` : ""}${lesson.room ? `<small>${lesson.room}</small>` : ""}</div>`).join("") : `<span class="timetable-grid__empty" aria-label="لا توجد حصة">—</span>`}
+            </td>
+          `,
+            )
+            .join("")}
+        </tr>
+      `,
+      )
+      .join("");
+    const timetableWarnings = [
+      timetableGrid.missingSubjectCount
+        ? `<p class="timetable-warning" role="status">تعذر تحديد اسم المادة في ${timetableGrid.missingSubjectCount.toLocaleString("ar-LY")} حصة. أُظهرنا السجل في موضعه دون استبدال الاسم ببيانات افتراضية.</p>`
+        : "",
+      timetableGrid.unplacedCount
+        ? `<p class="timetable-warning" role="status">تعذر وضع ${timetableGrid.unplacedCount.toLocaleString("ar-LY")} حصة في الشبكة لنقص رقم اليوم أو الفترة في سجلها.</p>`
+        : "",
+    ].join("");
+
     return `
       <section class="portal-page study-page" aria-labelledby="portal-page-title">
-        ${renderStudyPageHeading(student.academicYear !== "—" ? `العام الدراسي ${student.academicYear}` : "إيقاع الأسبوع", "جدولي الدراسي", "مواعيد الحصص المنشورة للصف المرتبط بقيدك.", timetableIllustration, studentFloatingIcons.schedule)}
-        ${student.timetable.length ? `<div class="week-ribbon">${student.timetable.map((day, index) => `<article class="week-ribbon__day ${Number(day.day_number) === new Date().getDay() ? "is-today" : ""}" data-reveal style="--path-index:${Math.min(index, 5)}"><header><span>${String(day.day_number + 1).toLocaleString("ar-LY", { minimumIntegerDigits: 2 })}</span><h3>${day.day}</h3>${Number(day.day_number) === new Date().getDay() ? "<small>اليوم</small>" : ""}</header><ol>${day.lessons.map((lesson) => `<li><time>${lesson.time}</time><div><strong>${lesson.subject}</strong><small>${[lesson.period, lesson.teacher, lesson.room].filter(Boolean).join(" · ")}</small></div><i data-lucide="move-up-left"></i></li>`).join("")}</ol></article>`).join("")}</div>` : emptyState("calendar-days", "لم يُنشر جدول الصف بعد", "سيظهر جدولك هنا عندما تضيف المدرسة الحصص إلى النظام.", studentArtwork.pages.timetable.empty)}
+        ${renderStudyPageHeading(student.academicYear ? `العام الدراسي ${student.academicYear}` : "إيقاع الأسبوع", "جدولي الدراسي", "مواعيد الحصص المنشورة للصف المرتبط بقيدك.", timetableIllustration, studentFloatingIcons.schedule)}
+        ${student.timetable.length ? `${timetableWarnings}<div class="timetable-shell" data-reveal><div class="timetable-grid__wrapper" tabindex="0" role="region" aria-label="جدول الحصص؛ يمكن التمرير أفقيًا"><table class="timetable-grid"><thead><tr><th scope="col" class="timetable-grid__corner">اليوم</th>${timetableGrid.periods.map((period) => `<th scope="col"><span class="timetable-grid__period-number">الحصة ${period.number.toLocaleString("ar-LY")}</span>${period.name !== `الحصة ${period.number}` ? `<span class="timetable-grid__period-name">${period.name}</span>` : ""}<time>${period.startTime && period.endTime ? `${period.startTime} – ${period.endTime}` : period.startTime || period.endTime || "وقت غير مسجل"}</time></th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div></div>` : emptyState("calendar-days", "لم يُنشر جدول الصف بعد", "سيظهر جدولك هنا عندما تضيف المدرسة الحصص إلى النظام.", studentArtwork.pages.timetable.empty)}
       </section>
     `;
   }

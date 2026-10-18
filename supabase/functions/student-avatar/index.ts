@@ -53,7 +53,7 @@ function storagePath(value: unknown, supabaseUrl: string) {
       return null;
     }
     const projectOrigin = new URL(supabaseUrl).origin;
-    if (url.origin !== projectOrigin) return { directUrl: url.href };
+    if (url.origin !== projectOrigin) return null;
     const match = url.pathname.match(
       /\/storage\/v1\/object\/(?:sign|public|authenticated)\/photos\/(.+)$/,
     );
@@ -152,9 +152,6 @@ Deno.serve(async (request: Request) => {
     for (const candidate of candidates) {
       const resolved = storagePath(candidate, supabaseUrl);
       if (!resolved) continue;
-      if (typeof resolved === "object" && resolved.directUrl) {
-        return json({ image_url: resolved.directUrl }, 200, request);
-      }
 
       const { data, error } = await admin.storage
         .from("photos")

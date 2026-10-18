@@ -24,7 +24,7 @@
 
 ## ربط Supabase
 
-1. اربط المستودع بمشروع Supabase وطبّق ملفات migrations الموجودة في `supabase/migrations/` بالترتيب، بما فيها `010_student_portal_identity.sql` و`011_student_login_identity_resolution.sql`:
+1. اربط المستودع بمشروع Supabase وطبّق ملفات migrations الموجودة فعليًا في `supabase/migrations/` بترتيبها الرقمي؛ في هذه النسخة تمتد الملفات من `001_extensions.sql` إلى `008_student_portal_projection.sql`:
    `supabase link --project-ref <PROJECT_REF>` ثم `supabase db push`.
 2. في `js/supabase-config.js`، أدخل `url` للمشروع و`anonKey` (أو المفتاح العام publishable). هذه القيم عامة بطبيعتها، وتُستخدم مع RLS؛ لا تضع مفتاح `service_role` هنا.
 3. اضبط `CORS_ALLOWED_ORIGINS` في أسرار Supabase ليحتوي على نطاقات التطبيق المنشورة المسموحة مفصولة بفواصل، مثل `supabase secrets set --project-ref <PROJECT_REF> CORS_ALLOWED_ORIGINS=https://school.example`، ثم انشر الدالتين: `supabase functions deploy student-login` و`supabase functions deploy student-avatar`. يسمح المصدران صراحةً بأصل التطوير `http://localhost:8000`؛ لا يلزم إضافته إلى السر.
@@ -49,7 +49,7 @@
 - `js/app.js` و`js/student-artwork.js`: المصادقة وعرض البوابة وفهرس رسوم المدرسة.
 - `js/supabase-config.js`: إعداد URL والمفتاح العام للمتصفح.
 - `supabase/functions/student-login/` و`supabase/functions/student-avatar/`: تسجيل الدخول وتوقيع صورة الطالب الخاصة.
-- `supabase/migrations/002_functions.sql` و`006_security_hardening.sql` و`009_student_login_hardening.sql` و`010_student_portal_identity.sql` و`011_student_login_identity_resolution.sql`: إسقاطات الطالب، ربط هوية الدخول، وصلاحياتها.
+- `supabase/migrations/001_extensions.sql` و`002_functions.sql` و`006_security_hardening.sql` و`007_storage.sql` و`008_student_portal_projection.sql`: مخطط الطالب، إسقاطات بيانات البوابة، صلاحياتها وتخزين الصور الخاص.
 
 ## تحقق واجهة الطالب
 
@@ -61,4 +61,4 @@
 - اجتاز `js/app.js` و`js/data.js` و`js/student-artwork.js` و`js/supabase-client.js` فحص `node --check`، ولم تظهر تشخيصات محرر في ملفات JavaScript وCSS التي فُحصت.
 - اختُبرت محليًا حالات رفض الدخول، ورفض/انتهاء الجلسة، وفشل جلب البيانات الأساسية، وإعادة المحاولة، وانتهاء المهلة باستخدام استجابات محاكاة محلية معزولة. لم تُحاكَ بوابة ناجحة ببيانات طالب وهمية.
 - لا توجد حزمة اختبارات آلية أو إعداد بناء في جذر المستودع. لم يُنفّذ تسجيل دخول حقيقي أو قراءة بيانات أو تسجيل خروج ضد Supabase، ولم يُختبر رابط Storage الموقّع؛ يلزم اختبار تكاملي مصرح به على بيئة Supabase اختبارية قبل تأكيد نجاح المصادقة والبيانات الحقيقية.
-- لم يُعدّل مخطط قاعدة البيانات أو تُطبّق ترحيلات أو تُنشر Edge Functions في هذه المراجعة.
+- أضيف `008_student_portal_projection.sql` محليًا لإصلاح إسقاط بيانات الطالب والجدول؛ لم يُطبّق على أي قاعدة بيانات ولم تُنشر Edge Functions. اختبارات التحويل وعقد SQL المحلية لا تثبت نجاح القراءة الحية أو الصورة دون جلسة اختبار مصرح بها.
