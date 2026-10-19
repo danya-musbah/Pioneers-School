@@ -228,8 +228,7 @@ button {
 }
 
 .public-page,
-.login-page,
-.student-shell {
+.login-page {
   animation: page-enter 360ms var(--motion-ease) both;
 }
 

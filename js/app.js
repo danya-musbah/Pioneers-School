@@ -1669,11 +1669,8 @@ function renderPortalPageMarkup(page, student) {
       })[value] || value;
     const sections = [
       {
-        title: "البيانات الشخصية",
+        title: "المعلومات الأساسية",
         fields: [
-          ["رقم الطالب", student.studentNumber],
-          ["رقم الملف", student.fileNumber],
-          ["رقم القيد", student.registrationNumber],
           ["الاسم بالإنجليزية", student.fullNameEnglish],
           ["الاسم الأول", student.firstName],
           ["اسم الأب", student.fatherName],
@@ -1683,17 +1680,11 @@ function renderPortalPageMarkup(page, student) {
           ["اسم أقرب الأقرباء", student.nearestRelativeName],
           ["صلة القرابة", student.nearestRelativeRelationship],
           ["الجنس", genderLabel],
+          ["تاريخ الميلاد", student.dateOfBirth],
+          ["مكان الميلاد", student.placeOfBirth],
           ["الرقم الوطني", student.nationalId],
           ["الجنسية", student.nationality],
           ["الديانة", student.religion],
-          ["هاتف الطالب", student.phone],
-        ],
-      },
-      {
-        title: "بيانات الميلاد",
-        fields: [
-          ["تاريخ الميلاد", student.dateOfBirth],
-          ["مكان الميلاد", student.placeOfBirth],
         ],
       },
       {
@@ -1733,8 +1724,9 @@ function renderPortalPageMarkup(page, student) {
         ],
       },
       {
-        title: "العنوان",
+        title: "العنوان والتواصل",
         fields: [
+          ["هاتف الطالب", student.phone],
           ["عنوان الطالب", student.address],
           ["عنوان السكن", student.residenceAddress],
           ["المدينة", student.city],
@@ -1754,13 +1746,47 @@ function renderPortalPageMarkup(page, student) {
         ),
       }))
       .filter((section) => section.fields.length);
+    const profileQuickFacts = [
+      {
+        label: "رقم الطالب",
+        value: student.studentNumber,
+        icon: "badge-check",
+      },
+      { label: "رقم الملف", value: student.fileNumber, icon: "folder" },
+      {
+        label: "الصف والشعبة",
+        value: [student.grade, student.section]
+          .filter((value) => value && value !== "—")
+          .join(" · "),
+        icon: "school",
+      },
+      {
+        label: "السنة الدراسية",
+        value: student.academicYear,
+        icon: "calendar-days",
+      },
+    ].filter(({ value }) => value && value !== "—");
+    const enrollmentStatus = [
+      student.enrollmentStatus,
+      student.educationalStatus,
+      student.fileStatus,
+      student.outcome,
+    ].find((value) => value && value !== "—");
 
     return `
       <section class="portal-page study-page" aria-labelledby="portal-page-title">
-        ${renderStudyPageHeading("هويتك في المدرسة", "ملفي الدراسي", "مساحتك التعريفية كما سُجّلت في القيد الدراسي.", studentArtwork.pages.profile, studentFloatingIcons.welcome)}
         <article class="profile-story" data-reveal>
-          <div class="profile-story__identity">${studentPortraitMarkup(student, "profile")}<div><span>الاسم المسجل</span><h3>${student.name}</h3><p>${student.studentNumber ? `رقم الطالب ${student.studentNumber}` : ""}</p></div></div>
-          <div class="profile-story__seal" aria-hidden="true"><i data-lucide="school"></i><span>رواد العلم</span></div>
+          <header class="profile-story__hero" aria-labelledby="portal-page-title">
+            <div class="profile-story__hero-copy">
+              <span class="profile-story__eyebrow">هويتك في المدرسة <i data-lucide="sparkles" aria-hidden="true"></i></span>
+              <h2 id="portal-page-title">ملفي الدراسي</h2>
+              <p class="profile-story__intro">مساحتك التعريفية كما سُجّلت في القيد الدراسي.</p>
+              <div class="profile-story__identity"><span>الاسم الرباعي</span><h3>${student.name}</h3></div>
+              ${enrollmentStatus ? `<span class="profile-story__status"><i data-lucide="circle-check" aria-hidden="true"></i><span>حالة القيد · ${translateStatus(enrollmentStatus)}</span></span>` : ""}
+            </div>
+            <div class="profile-story__portrait">${studentPortraitMarkup(student, "profile")}</div>
+            ${profileQuickFacts.length ? `<dl class="profile-story__quick-facts">${profileQuickFacts.map(({ label, value, icon }) => `<div><dt><i data-lucide="${icon}" aria-hidden="true"></i>${label}</dt><dd>${value}</dd></div>`).join("")}</dl>` : ""}
+          </header>
           ${visibleSections.length ? visibleSections.map((section) => `<section class="profile-story__section"><h3>${section.title}</h3><dl class="profile-story__details">${section.fields.map(([label, value], index) => `<div style="--path-index:${Math.min(index, 5)}"><dt>${label}</dt><dd>${value}</dd></div>`).join("")}</dl></section>`).join("") : emptyState("user-round", "لا توجد بيانات إضافية مسجلة", "لم تُسجل بيانات أخرى لعرضها في ملف الطالب.")}
         </article>
       </section>

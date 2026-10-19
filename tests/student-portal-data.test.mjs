@@ -243,18 +243,57 @@ test("mobile portal navigation CSS accounts for fixed positioning and safe areas
     new URL("../css/student-portal.css", import.meta.url),
     "utf8",
   );
+  const globalCss = await readFile(
+    new URL("../css/styles.css", import.meta.url),
+    "utf8",
+  );
   const mobileNavRule =
     css.match(
       /@media \(max-width: 1024px\)[\s\S]*?\.portal-nav \{([\s\S]*?)\n  \}/,
     )?.[1] ?? "";
   assert.match(mobileNavRule, /position: fixed/);
-  assert.match(mobileNavRule, /env\(safe-area-inset-bottom\)/);
+  assert.match(mobileNavRule, /inset-inline: 0/);
+  assert.match(mobileNavRule, /bottom: 0/);
+  assert.match(mobileNavRule, /env\(safe-area-inset-bottom, 0px\)/);
+  assert.doesNotMatch(mobileNavRule, /transform/);
   assert.match(
     css,
-    /@media \(max-width: 680px\)[\s\S]*?padding: 17px 14px calc\(96px \+ env\(safe-area-inset-bottom\)\)/,
+    /@media \(max-width: 1024px\)[\s\S]*?calc\(96px \+ env\(safe-area-inset-bottom, 0px\)\)/,
   );
   assert.match(
     css,
     /\.student-shell \.whatsapp-link--quick[\s\S]*?display: inline-flex/,
+  );
+  assert.doesNotMatch(
+    globalCss,
+    /\.public-page,\s*\.login-page,\s*\.student-shell\s*\{\s*animation:/,
+  );
+});
+
+test("student profile renders its title and real portrait in a dedicated responsive identity header", async () => {
+  const app = await readFile(new URL("../js/app.js", import.meta.url), "utf8");
+  const css = await readFile(
+    new URL("../css/student-portal.css", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    app,
+    /class="profile-story__hero"[\s\S]*?id="portal-page-title">ملفي الدراسي/,
+  );
+  assert.match(
+    app,
+    /class="profile-story__portrait">\$\{studentPortraitMarkup\(student, "profile"\)\}/,
+  );
+  assert.match(app, /class="profile-story__quick-facts"/);
+  assert.match(css, /\.profile-story__hero\s*\{[\s\S]*?display: grid/);
+  assert.match(css, /\.profile-story__portrait \.student-photo-frame--profile/);
+  assert.match(
+    css,
+    /\.profile-story__portrait \.student-photo-frame__image\s*\{[\s\S]*?min-height: 0;[\s\S]*?max-height: 100%/,
+  );
+  assert.match(
+    css,
+    /\.profile-story__details dd\s*\{[\s\S]*?font-size: clamp\(1\.08rem/,
   );
 });
