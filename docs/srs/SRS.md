@@ -1,3 +1,257 @@
+## 9. الأمان والصلاحيات
+
+### 9.1 المصادقة والتفويض
+
+- بوابة الطالب تستخدم Supabase Auth مع حفظ الجلسة وتجديد الرمز. `student-login` تبدأ قبل المصادقة؛ config يعطل JWT gateway validation لأول ثلاث دوال، لذلك يعتمد التفويض على تحقق handler من bearer/session/permission بحسب الدالة. `student-avatar` مفعّل له gateway validation ويتحقق كذلك داخل handler.
+- أدوار الموظفين `admin`, `staff`, `employee`؛ الأذونات محفوظة في `permissions/user_permissions`، وadmin يمنح ضمنيًا كل صلاحية عبر helpers. حساب الطالب Auth مرتبط بسجل `student_app_accounts`.
+- migrations تفعّل RLS للجداول العامة وتطبق حدود المدرسة والصلاحيات على مجالات متعددة. بوابة الطالب تستخدم RPC security-definer محدودة بدل direct table access.
+- migration 006 تسحب execute العامة/anon ثم تمنح صلاحيات انتقائية؛ دوال حل رقم الطالب وإدارة المستخدمين service-role-only، وRPCs الطالب authenticated-only.
+
+### 9.2 البيانات الحساسة والمدخلات
+
+- mapper يهرب النصوص قبل عرضها؛ خطأ تسجيل الدخول لا يعيد بريد حساب الطالب. أسرار الخادم تقرأها Edge Functions عبر Deno.env ولا ينبغي وضعها في ملفات المتصفح.
+- الصور عبر bucket خاص ورابط موقع مؤقت. CORS حد أصل وليس بديلًا للتفويض؛ قوائم localhost ثابتة وتختلف بين الدوال.
+- لا دليل في المستودع على تشفير حقول قاعدة البيانات على مستوى التطبيق، أو سياسة احتفاظ منشورة، أو مراجعة أمنية مستقلة. لا تُدرج هنا أي قيم مفاتيح أو اعتماد.
+
+### 9.3 مخاطر ذات سند برمجي
+
+1. `uq_current_year` فريد عالميًا على `academic_years(is_current)` عند true، بينما trigger يمسح السنة الأخرى داخل المدرسة فقط؛ قد يمنع ذلك وجود عام حالي لأكثر من مدرسة.
+2. سياسات Storage تسمح للمستخدم النشط بقراءة جميع objects في buckets المحددة دون شرط يربط الكائن بمدرسة/طالب/وثيقة داخل policy نفسها.
+3. الحلقة العامة في RLS تمنح select للمستخدم النشط للجداول التي لم تستبدل سياستها؛ `idempotency_keys` و`login_attempts` بلا `school_id` ولا سياسة select خاصة معروفة، وقد تكشف metadata/hash.
+4. سياسات مالية تسمح لبعض الأدوار بإدخال/تحديث صفوف مباشرة، وقد يتجاوز ذلك المسار الذري الذي ينشئ الرصيد/الإيصال/التدقيق.
+5. عمليات Auth وDB والتدقيق في Edge Functions متعددة الأنظمة وغير ذرية؛ يوجد rollback تعويضي في مواضع لكنه لا يضمن التراجع الكامل.
+6. حد تسجيل الدخول مبني على hash اسم المستخدم وفترة 15 دقيقة؛ لا يظهر تقييد IP أو تسلسل يضمن حدًا متزامنًا، والدالة لا تستدعي `record_login_failure()`.
+
+## 10. حالات الاستخدام
+
+### UC-01 — تصفح الموقع
+
+- **الممثل والهدف:** زائر يريد معرفة المدرسة والوصول إلى الدخول.
+- **الشروط المسبقة:** ملفات الواجهة والأصول متاحة.
+- **التدفق الأساسي:** فتح الصفحة → الاطلاع على الأقسام/المراحل/FAQ → اختيار دخول الطالب.
+- **البديل:** رابط خارجي أو CDN غير متاح؛ لا يوجد بديل محلي شامل للخدمات.
+- **النتيجة:** يبقى الزائر بالموقع أو ينتقل إلى نموذج الدخول.
+
+### UC-02 — دخول الطالب ومشاهدة ملخصه
+
+- **الممثل والهدف:** طالب بحساب فعال يفتح بياناته المرتبطة.
+- **الشروط المسبقة:** Auth/mapping صالحان، النشر وتطبيق migrations مكتملان، اتصال متاح.
+- **التدفق الأساسي:** إدخال بيانات → Edge Function → Auth session → `student_portal_session` و`student_portal_data` → مطابقة الهوية → عرض البوابة.
+- **البديل:** مدخل ناقص/حساب غير مربوط أو معطل/حد محاولات/مهلة/خطأ بيانات أو هوية؛ تظهر رسالة ولا تعرض بيانات غير متحققة.
+- **النتيجة:** بوابة للطالب المرتبط أو البقاء في الدخول.
+
+### UC-03 — مراجعة البيانات الدراسية
+
+- **الممثل والهدف:** طالب مسجل يراجع ملفه أو حضوره أو نتائجه أو رسومه أو جدوله.
+- **الشروط المسبقة:** إسقاط بيانات صالح.
+- **التدفق الأساسي:** اختيار القسم → عرض البيانات المحملة أو الحالة الفارغة → استخدام history للرجوع.
+- **البديل:** النقص يظهر كحالة فارغة/تحذير، ولا تُخترع قيم للجدول.
+- **النتيجة:** عرض قراءة فقط مرتبط بحساب Auth.
+
+### UC-04 — تسجيل الخروج
+
+- **الممثل والهدف:** طالب ينهي الجلسة.
+- **الشروط المسبقة:** بوابة مفتوحة.
+- **التدفق الأساسي:** اختيار الخروج → تأكيد → signOut ومسح state والعودة للموقع.
+- **البديل:** إلغاء أو Escape يبقي الجلسة؛ عند الفشل يحاول التطبيق إزالة الجلسة المحلية.
+- **النتيجة:** واجهة عامة دون بيانات الطالب في state المعروض.
+
+### UC-05 — إدارة حساب عبر API الخلفية
+
+- **الممثل والهدف:** موظف مصرح ينفذ إجراء حساب إداري/طالب.
+- **الشروط المسبقة:** مستهلك API خارجي غير موجود في الواجهة المعروضة، Bearer صالح، `my_session` فعال، صلاحية ومدرسة صحيحتان.
+- **التدفق الأساسي:** POST → تحقق origin/session/scope/المدخلات → Auth/DB/RPC → JSON وتدقيق حيث ينفذ.
+- **البديل:** رفض 400/401/403/404/409/500 أو فشل جزئي بين الخدمات.
+- **النتيجة:** تغير خادمي أو رفض؛ لا شاشة إدارة ضمن التطبيق الحالي.
+
+## 11. القيود والاعتماديات
+
+1. لا package manifest/build system جذر ظاهر؛ README يصف تشغيل خادم ثابت والاختبارات بـNode.
+2. التشغيل الكامل يتطلب Supabase project وتهيئة خادم آمنة، migrations مطبقة، ونشر Edge Functions؛ لم يحدث اتصال أو نشر أثناء التحليل.
+3. imports/CDN تعتمد على اتصال `esm.sh`, `unpkg`, Google Fonts وخدمات Supabase.
+4. `verify_jwt=false` على admin-user-management/student-login/student-app-access؛ يجب أن يظل تحقق handler صحيحًا. avatar مضبوط `true`.
+5. migrations متسلسلة؛ 006 و008 تغيران ACL ومنطق الإسقاط، و005 يزرع بيانات مدرسة/سنوات. الملفات لا تثبت أنها طبقت على مشروع منشور.
+6. `school_settings` مفردة `id=1` مع schema أوسع متعدد المدارس؛ multi-tenant يحتاج تأكيدًا. `school_grades.code/level_number` عالميان unique.
+7. قيم البيئة الفعلية، نشر CORS، أحجام الملفات، حالة المشروع الحي، ونسخ البيانات غير مدققة.
+
+## 12. مصفوفة التتبّع
+
+مصفوفة كل متطلب ومصدر التنفيذ والاختبار/حالة التحقق موجودة في [`requirements-traceability.md`](requirements-traceability.md). عندما لا يوجد اختبار مرتبط يرد النص **«لا يوجد اختبار معروف في المستودع»**؛ اختبارات mapper/عقد SQL لا تعادل التكامل الحي.
+
+## 13. نقاط تحتاج إلى تحقق
+
+التعارضات والفجوات والأسئلة والأجزاء غير المتحقق منها مدرجة في [`analysis-gaps.md`](analysis-gaps.md)، بما فيها حالة نشر Supabase، الضوابط المتعددة المدارس والتخزين، غياب واجهة الإدارة، واختبار CSS غير الناجح.
+
+## 14. الملاحق
+
+### 14.1 الوحدات والملفات المرجعية
+
+| الوحدة               | الملفات                                                                                                                                 |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| نقطة الدخول والمحتوى | `index.html`, `js/app.js`, `js/data.js`                                                                                                 |
+| تحويل البيانات والفن | `js/student-portal-data.mjs`, `js/student-artwork.js`, `assets/characters/manifest.js`                                                  |
+| اتصال Supabase       | `js/supabase-client.js`, `js/supabase-config.js`, `supabase/config.toml`                                                                |
+| العرض                | `css/tokens.css`, `css/styles.css`, `css/student-portal.css`, `assets/`                                                                 |
+| Edge Functions       | `supabase/functions/admin-user-management/index.ts`, `student-app-access/index.ts`, `student-login/index.ts`, `student-avatar/index.ts` |
+| قاعدة البيانات       | migrations `001` إلى `008` ضمن `supabase/migrations/`                                                                                   |
+| التوثيق والاختبار    | `README.md`, `tests/student-portal-data.test.mjs`                                                                                       |
+
+### 14.2 قائمة الجداول حسب المجال
+
+- المدرسة/الهوية: `schools`, `school_settings`, `profiles`, `permissions`, `user_permissions`, `audit_logs`, `idempotency_keys`, `schema_version`.
+- الهيكل الأكاديمي: `academic_years`, `academic_stages`, `school_grades`, `subjects`, `academic_terms`, `classes`, `grade_subjects`, `class_subjects`, `school_locations`, `timetable_periods`, `week_days`, `teacher_availability`, `timetable_entries`.
+- الطلاب: `guardians`, `students`, `student_app_accounts`, `student_guardians`, `student_enrollments`, `student_file_transactions`, `student_notes`, `student_file_checklist_templates`, `student_file_checklist_items`.
+- الحضور/النتائج: `attendance_statuses`, `student_attendance`, `employee_attendance_statuses`, `assessment_types`, `exams`, `grade_records`, `subject_results`, `term_results`, `grade_bands`.
+- الموظفون: `departments`, `job_titles`, `employees`, `employee_document_checklist_items`, `employee_attendance`, `employee_assignments`, `leave_types`, `leave_requests`, `payroll_periods`, `payroll_entries`.
+- الرسوم: `fee_types`, `fee_plans`, `fee_plan_items`, `student_fees`, `installments`, `payments`, `finance_receipt_counters`, `employee_number_counters`, `finance_receipts`, `expense_categories`, `expenses`.
+- الوثائق/التواصل/الأرشفة: `social_case_categories`, `social_cases`, `social_case_notes`, `document_templates`, `documents`, `document_versions`, `document_approvals`, `completeness_field_rules`, `notifications`, `notification_read_states`, `school_calendar_exceptions`, `announcements`, `archive_records`, `archive_items`, `backup_records`, `retention_policies`, `login_attempts`, `attachments`.
+- schema الداخلي: `app.academic_year_closure_authorizations`, `app.student_file_transition_authorizations`.
+
+### 14.3 واجهات API/RPC الأساسية
+
+| الواجهة                     | الوظيفة                                               |
+| --------------------------- | ----------------------------------------------------- |
+| `student-login`             | تحويل رقم الطالب إلى هوية Auth وتسجيل الدخول.         |
+| `student-avatar`            | توقيع صورة للطالب المرتبط بالجلسة.                    |
+| `student-app-access`        | إدارة دخول الطلاب أو تسجيل واقعة تسليم بيانات الدخول. |
+| `admin-user-management`     | استعراض/إنشاء/إدارة حسابات موظفي المدرسة.             |
+| `student_portal_session()`  | هوية موجزة للطالب المرتبط.                            |
+| `student_portal_data()`     | إسقاط الملف والحضور والنتائج والرسوم والجدول.         |
+| `student_portal_identity()` | الجنس ومراجع الصورة للطالب الحالي.                    |
+| `my_session()`              | ملف الموظف وصلاحياته ومدرسته لخدمات الإدارة.          |
+
+### 14.4 سجل الافتراضات والقرارات
+
+- `منفذ` تعني وجود تنفيذ في الملفات المحلية، لا نشرًا أو تشغيلًا حيًا.
+- لم تُعتبر أسماء الصفحات أو README دليلًا على الاكتمال؛ قورنت بالتنفيذ، مثل حالة الروابط التعليمية.
+- metadata الأرشفة/النسخ الاحتياطي لا يثبت وجود ملف قابل للاستعادة.
+- لم توضع أرقام للأداء/التوافر/الامتثال بلا دليل؛ تسجل كمسائل اعتماد.
+- لم يُفتح `.env` ولم تُدرج قيم اعتماد في الوثائق.
+- لم تُضف مقترحات مستقبلية إلى متطلبات التنفيذ الحالي؛ التوصيات وأسئلة المالك في ملف الفجوات.
+
+## 4. متطلبات واجهة المستخدم
+
+| المعرّف | الشاشة/المكوّن                 | المتطلبات المثبتة                                                                                                                                           |
+| ------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UI-01   | الصفحة العامة                  | عربية RTL؛ أقسام المدرسة، معاينة البوابة، رحلة الاستخدام، المراحل، FAQ، التواصل والتذييل؛ تنقل بالمرساة.                                                    |
+| UI-02   | الدخول                         | حقلا رقم الطالب وكلمة المرور، إظهار/إخفاء كلمة المرور، مساعدة، حالة تحميل/خطأ عبر `role=status` و`aria-live`؛ النموذج `novalidate` ولا يتحقق من صيغة الرقم. |
+| UI-03   | بوابة الطالب                   | sidebar للشاشة الكبيرة وشريط سفلي/«المزيد» للشاشة الصغيرة؛ تاريخ الجهاز وزر خروج وتواصل.                                                                    |
+| UI-04   | الملخص                         | مؤشرات الحضور وحصص اليوم والنتائج والرسوم وحالات فارغة.                                                                                                     |
+| UI-05   | الملف والحضور والنتائج والرسوم | أقسام قراءة فقط، إخفاء الحقول الفارغة، حالات غياب البيانات.                                                                                                 |
+| UI-06   | الجدول                         | جدول HTML بعناوين وأعمدة ومنطقة قابلة للتمرير أفقيًا ورسائل للصفوف غير القابلة للوضع.                                                                       |
+| UI-07   | الروابط التعليمية              | صفحة موجودة لكن حالة فارغة ثابتة؛ لا نموذج لإضافة روابط.                                                                                                    |
+| UI-08   | الإدارة                        | لا شاشة إدارة مستخدمين/طلاب/موظفين/رسوم/درجات معروفة في `index.html` أو render functions في `js/app.js`.                                                    |
+| UI-09   | التوافق والإتاحة               | media queries و`prefers-reduced-motion` وتسميات ARIA في أجزاء من التطبيق؛ لا إثبات امتثال WCAG أو اختبار إتاحة شامل، ودعم تبويبات لوحة المفاتيح جزئي.       |
+
+## 5. متطلبات الواجهات الخارجية
+
+| الواجهة                 | الاستخدام/العقد المثبت                                                                          | الاعتماد/الملاحظة                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Supabase Auth           | `signInWithPassword`, حفظ/استعادة/تحديث الجلسات، `setSession`, `signOut` وإدارة مستخدمي الخادم. | يتطلب مشروع Supabase وإعدادات مناسبة؛ لا اختبار حي.                                     |
+| Edge Functions          | POST/OPTIONS: `student-login`, `student-avatar`, `student-app-access`, `admin-user-management`. | JSON وBearer بحسب الوظيفة؛ CORS عبر `CORS_ALLOWED_ORIGINS` مع أصول تطوير ثابتة متفاوتة. |
+| Postgres RPC/PostgREST  | `student_portal_session`, `student_portal_data`, `student_portal_identity` وغيرها.              | RLS/صلاحيات تنفيذ من migrations؛ الحالة المنشورة غير مفحوصة.                            |
+| Supabase Storage        | buckets خاصة `photos`, `documents`, `attachments`; صورة الطالب برابط موقع 600 ثانية.            | migration 007 لا يحدد حدًا للبنية MIME/حجم الملف على bucket.                            |
+| مكتبات CDN              | Supabase JS v2 من `esm.sh`، Lucide 0.468.0 من `unpkg`، وTajawal من Google Fonts.                | تتطلب اتصالًا خارجيًا؛ لا إعداد build أو lockfile معروف.                                |
+| روابط المستخدم الخارجية | `wa.me`, `tel:`, `mailto:`, Google Maps.                                                        | خارج نطاق التطبيق؛ لا بريد/دفع/رسائل داخلية مثبتة.                                      |
+
+## 6. متطلبات البيانات
+
+### 6.1 النموذج والعلاقات
+
+قاعدة البيانات PostgreSQL في schema `public` وschema داخلي `app`، وتستخدم UUID للمفاتيح غالبًا. العلاقات المحورية: school إلى السنوات والطلاب والموظفين؛ السنة إلى الفصول والفترات والتسجيلات؛ الطالب إلى أولياء الأمور والتسجيلات والحضور والنتائج والرسوم؛ القيد إلى الحضور/النتائج/الرسوم؛ الموظف إلى الحضور والتكليفات والإجازات والرواتب؛ الرسوم إلى الأقساط فالمدفوعات؛ الوثائق إلى الإصدارات والموافقات؛ والأرشيف إلى العناصر. تعريفات FK و`ON DELETE` والحقول nullable/default موضحة في `001_extensions.sql` وتعديلات migrations اللاحقة.
+
+### 6.2 قاموس البيانات
+
+الأنواع المختصرة: `uuid`, `text`, `bool`, `int`, `smallint`, `bigint`, `numeric(p,s)`, `date`, `time`, `timestamptz`, `jsonb`, `text[]`. الجدول التالي يصف الحقول المحورية ذات الصلة بالتدفقات والقيود، وليس بديلًا عن تعريف كل عمود في migration 001؛ يُرجع إليه للمجموعة الكاملة والـnull/default والقيود. لا تسقط الترحيلات أعمدة توافق قديمة عند تلخيص المجال.
+
+| الجدول/المجموعة                                                                                    | الحقول المحورية وأنواعها                                                                                                                                                                            |
+| -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schools`                                                                                          | `id uuid PK`; الاسم والعنوان والاتصال والشعار `text`; العملة `text`; timestamps.                                                                                                                    |
+| `school_settings`                                                                                  | `id smallint PK=1`, `school_id uuid FK`; بيانات المدرسة `text`; حدود الرفع/الاحتفاظ `int`; `week_start_day smallint`, `photo_max_px int`, `version int`, timestamps.                                |
+| `profiles`                                                                                         | `id uuid PK/FK auth.users`, `school_id/employee_id uuid`; username/email/name/phone/role/status `text`; `must_change_password bool`; login timestamps/version.                                      |
+| `permissions`, `user_permissions`                                                                  | permission key `text PK`; user/granter `uuid`; permission `text FK`; `granted_at timestamptz`.                                                                                                      |
+| `audit_logs`                                                                                       | `id bigint identity PK`; actor/user/school/year IDs; action/entity `text`; old/new/metadata `jsonb`; timestamps.                                                                                    |
+| `idempotency_keys`                                                                                 | `key/operation/status/hash text`; `actor_id uuid`; `result jsonb`; timestamps.                                                                                                                      |
+| `schema_version`                                                                                   | `id smallint PK=1`; schema/app version `text`; applied time.                                                                                                                                        |
+| `academic_years`                                                                                   | IDs المدرسة `uuid`; `code/label/name/status text`; start/end `date`; `is_current bool`; closed timestamp/version.                                                                                   |
+| `academic_stages`, `school_grades`, `subjects`                                                     | معرفات `uuid`; code/name `text`; مستوى/ترتيب `smallint/int`; flags `bool`; version/timestamps؛ grade `code` و`level_number` عالميّا unique.                                                         |
+| `academic_terms`, `classes`                                                                        | year/grade/class/employee IDs `uuid`; dates `date`; term/roll/capacity `smallint/int`; room/section/name `text`; flags/version/timestamps.                                                          |
+| `grade_subjects`, `class_subjects`                                                                 | year/grade/subject/class/employee IDs `uuid`; scores/weights `numeric`; weekly periods `smallint`; flags/version؛ coursework+final=100.                                                             |
+| `guardians`, `students`                                                                            | الأسماء/الاتصال/الحالات `text`; DOB/registration/graduation `date`; `health_conditions/disability_needs text[]`; flags login/archive/delinquent `bool`; مسارات الصور `text`; `student_number` فريد. |
+| `student_app_accounts`                                                                             | `student_id uuid PK/FK`, `school_id/auth_user_id uuid`; `login_email text unique`; enabled/delivery flags `bool`; issue/create/update timestamps.                                                   |
+| `student_guardians`, `student_enrollments`                                                         | روابط `uuid`; relationship/status/outcome `text`; dates; roll number `smallint`; new/repeat/primary flags `bool`; unique student/year.                                                              |
+| `student_file_transactions`, `student_notes`, `student_file_checklist_templates/items`             | student/template/actor UUIDs؛ نصوص note/reason/path/MIME؛ تواريخ؛ sensitivity/received/required/active flags؛ file size `bigint`.                                                                   |
+| `attendance_statuses`, `student_attendance`, `employee_attendance_statuses`, `employee_attendance` | code/status `text`; student/enrollment/employee/class UUIDs؛ attendance date `date`; check-in/out `time`; late `smallint`; flags present/excused/paid؛ unique enrollment/date وemployee/date.       |
+| `assessment_types`, `exams`, `grade_records`                                                       | school/year/class/grade/subject/exam UUIDs؛ title/status `text`; exam date `date`; max/score/weight `numeric`; absent `bool`; status/round enums/version.                                           |
+| `subject_results`, `term_results`, `grade_bands`                                                   | enrollment/subject/year UUIDs؛ scores/percentage `numeric`; round/decision/status enums؛ failed subjects/rank `smallint`; rules `jsonb`; calculation/approval times.                                |
+| `departments`, `job_titles`, `employees`                                                           | IDs UUID؛ الاسم/الرقم/الاتصال/المؤهل `text`; dates؛ salary `numeric(12,2)`؛ status enum؛ teacher/archive flags؛ version/timestamps.                                                                 |
+| `employee_document_checklist_items`, `employee_assignments`                                        | employee/class-subject/year UUIDs؛ item/role_note `text`; received date؛ periods `smallint`; received/active `bool`; version/timestamps.                                                            |
+| `leave_types`, `leave_requests`                                                                    | employee/type/reviewer UUIDs؛ start/end `date`; generated `days_count int`; status enum؛ entitlements `int`; reason/review/document `text`; version.                                                |
+| `payroll_periods`, `payroll_entries`                                                               | school/period/employee UUIDs؛ year `int`, month `smallint`, dates؛ amounts `numeric(12,2)`؛ generated net salary؛ status enum/version.                                                              |
+| `fee_types`, `fee_plans`, `fee_plan_items`                                                         | school/year/grade/type UUIDs؛ code/name/gender scope `text`; amount `numeric(14,2)`؛ due date؛ installment count `smallint`; active/mandatory flags.                                                |
+| `student_fees`, `installments`, `payments`, `finance_receipts`                                     | enrollment/student/installment/school/payment UUIDs؛ amounts `numeric(14,2)`؛ date؛ status/method enums؛ receipt text؛ snapshot `jsonb`; generated net/remaining؛ idempotency unique.               |
+| `finance_receipt_counters`, `employee_number_counters`                                             | ID/school UUIDs؛ `last_number bigint`; `updated_at`.                                                                                                                                                |
+| `expense_categories`, `expenses`                                                                   | category/school/year/actor UUIDs؛ amount `numeric(14,2)`؛ date؛ description/status/method `text`; flags.                                                                                            |
+| `timetable_periods`, `week_days`, `teacher_availability`, `timetable_entries`, `school_locations`  | IDs UUID؛ day/period/order `smallint/int`; start/end `time`; names/room `text`; active flags/version؛ entry links class/period/employee/subject/location.                                           |
+| `social_case_categories`, `social_cases`, `social_case_notes`                                      | student/year/actor/case UUIDs؛ priority/status enums؛ summary/note `text`; opened/closed/followup dates؛ version.                                                                                   |
+| `document_templates`, `documents`, `document_versions`, `document_approvals`                       | document/template/version/actor UUIDs؛ content `text/jsonb`; category/status enums؛ version no `int`; file size `bigint`; hash/MIME/path `text`; approval bool.                                     |
+| `completeness_field_rules`                                                                         | `id/school_id uuid`; entity/record/field/label/importance `text`.                                                                                                                                   |
+| `notifications`, `notification_read_states`, `announcements`                                       | UUIDs؛ title/body/category `text`; type/audience/importance enums؛ read/pinned flags؛ timestamps؛ read-state PK `(school_id,user_id,notification_key)`.                                             |
+| `school_calendar_exceptions`                                                                       | school/year UUIDs؛ dates/ranges؛ kind/type/title `text`; school-day flag؛ unique school/year/date.                                                                                                  |
+| `archive_records`, `archive_items`, `backup_records`, `retention_policies`                         | school/year/archive UUIDs؛ state/status/type `text/enum`; manifest `jsonb`; checksum/path `text`; item count `int`, sizes `bigint`; retention days `int`; timestamps.                               |
+| `login_attempts`                                                                                   | `id bigint identity`; hashed login key `text`; attempted time; blocked `bool`.                                                                                                                      |
+| `attachments`                                                                                      | id/school UUIDs؛ entity/bucket/path/MIME/name `text`; size `bigint`; uploader UUID؛ deleted bool/version int/metadata jsonb.                                                                        |
+| `app.academic_year_closure_authorizations`, `app.student_file_transition_authorizations`           | transaction `bigint`; year/student/actor UUIDs؛ target status text؛ composite PK؛ privileges revoked from ordinary roles.                                                                           |
+
+### 6.3 القيود ودورة الحياة
+
+- مفاتيح UUID وFKs مع سياسات `RESTRICT`, `CASCADE`, `SET NULL` بحسب تعريف كل جدول؛ لا توجد سياسة حذف موحدة.
+- enrollment فريد `(student_id, academic_year_id)`؛ حضور الطالب فريد enrollment/date؛ الدرجات ونتائج المواد فريدة وفق exam/enrollment أو enrollment/grade_subject/round.
+- `app.money_amount` غير سالب و`app.percentage` بين 0 و100؛ المبالغ المالية وبعض الصافي/المتبقي أعمدة generated.
+- triggers تحدث timestamps، تدقق تغييرات محددة، تمنع الحذف النهائي لكيانات مختارة، وتحمي عمليات سحب الطالب وإغلاق السنة وعدم تغيير أعمدة دفعة محددة.
+- يوجد seed للمدرسة والسنوات والتقويم والمراحل والمواد وغيرها في `005_seed.sql`؛ لا ينشئ حساب مدير أو كلمة مرور.
+- لا يوجد استيراد/تصدير عام بالواجهة. `record-export` لا ينشئ ملفًا. metadata الأرشيف/النسخ لا تثبت إنشاء نسخة خارجية قابلة للاستعادة.
+
+## 7. المتطلبات غير الوظيفية
+
+| المعرّف | المتطلب/الحقيقة القابلة للتحقق                                                                                                            | المصدر                                                            | الحالة/الاعتماد المطلوب                                                      |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| NFR-001 | الواجهة تضبط `lang=ar` و`dir=rtl`.                                                                                                        | `index.html`                                                      | منفذ؛ اختبار كل الصفحات مطلوب.                                               |
+| NFR-002 | الواجهة تتكيف مع الشاشات الصغيرة؛ التنقل السفلي حتى 1024px يراعي safe-area.                                                               | `css/student-portal.css`                                          | CSS موجود؛ توافق المتصفحات يحتاج اختبارًا.                                   |
+| NFR-003 | احترام `prefers-reduced-motion`؛ Parallax لا يعمل عند تفضيل تقليل الحركة أو غياب مؤشر دقيق.                                               | `js/app.js`, `css/*.css`                                          | منفذ جزئيًا؛ لا قياس أداء بصري.                                              |
+| NFR-004 | نصوص البيانات المحولة تهرب HTML قبل تركيب قوالب الواجهة.                                                                                  | `js/student-portal-data.mjs:escapeHTML`                           | مثبت في mapper؛ اختبار أمني لبقية المخرجات مطلوب.                            |
+| NFR-005 | لا يرسل المتصفح مفتاح service-role؛ عميل Supabase يرفض المفتاح المعروف كخدمة ويستخدم المفتاح العام.                                       | `js/supabase-client.js`, Edge Functions                           | حاجز كودي موجود؛ مراجعة أسرار النشر خارج الفحص.                              |
+| NFR-006 | هوية الطالب مصدرها `auth.uid()` وربط خاص؛ لا direct access لجداول الطالب/الربط عبر مسار البوابة.                                          | `006_security_hardening.sql`, `008_student_portal_projection.sql` | مثبت في migrations محليًا؛ تطبيقها الحي غير متحقق.                           |
+| NFR-007 | RLS/Edge Functions تقيد البيانات بحسب المدرسة/الصلاحيات وتتحقق من bearer/session.                                                         | `004_rls.sql`, Edge Functions                                     | تنفيذ محلي؛ يتطلب اختبار صلاحيات على بيئة مصرح بها، ولا يثبت امتثال معيار.   |
+| NFR-008 | توقيع صورة الطالب مؤقت لعشر دقائق ويتحقق من هوية المستخدم والمسار/المشروع.                                                                | `student-avatar/index.ts`                                         | بالكود؛ لم يختبر Storage حيًا.                                               |
+| NFR-009 | طلبات البوابة محدودة بمهلة 15 ثانية مع رسائل حالة مفهومة.                                                                                 | `js/app.js:withRequestTimeout`                                    | يطبق على الطلبات المشار إليها؛ `auth.setSession()` بلا مهلة صريحة؛ ليست SLA. |
+| NFR-010 | سجلات audit قابلة للقراءة بصلاحية `audit.view` وكتابة العميل المباشرة ممنوعة.                                                             | migrations 001/003/004/006                                        | إعداد مخطط موجود؛ لا إثبات لمراقبة/تنبيه تشغيلية أو retention job.           |
+| NFR-011 | واجهة الطالب للقراءة ولا توفر تعديل/دفع.                                                                                                  | `js/app.js`                                                       | منفذ للتطبيق الحالي.                                                         |
+| NFR-012 | لا توجد حدود موثقة لزمن الاستجابة العام أو عدد المستخدمين أو التوافر.                                                                     | لا يوجد SLA/قياس معروف                                            | يتطلب قياسًا واعتمادًا؛ لا تُخترع أرقام.                                     |
+| NFR-013 | لا يوجد إعداد موثق لنسخ احتياطي مجدول أو استعادة مجربة أو RPO/RTO.                                                                        | migrations تحفظ metadata                                          | يتطلب تحققًا تشغيليًا؛ الجداول لا تثبت التعافي.                              |
+| NFR-014 | تحميل الخطوط والمكتبات يعتمد على CDN ولا يوجد تثبيت/بناء محلي ظاهر.                                                                       | `index.html`, `js/supabase-client.js`                             | مثبت؛ اعتماد الخدمة وسياسة الخصوصية/التوفر قرار أصحاب المصلحة.               |
+| NFR-015 | الاستخدام بلوحة المفاتيح وقارئ الشاشة يجب دعمه؛ توجد ARIA و`dialog` لكن اختبار WCAG شامل غير موجود والتبويبات لا تدعم أسهم لوحة المفاتيح. | `js/app.js`, اختبار CSS                                           | دعم جزئي؛ يحتاج تقييم إتاحة واعتماد مستوى المطابقة.                          |
+
+## 8. قواعد العمل
+
+| المعرّف | القاعدة                                                                                         | المصدر                                                                                 |
+| ------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| BR-001  | الدخول يتطلب حساب Auth مربوطًا ومفعّلًا وسجل طالب مفعّلًا غير مسحوب/مؤرشف.                      | `002_functions.sql:resolve_login_email/current_student_portal_id`                      |
+| BR-002  | RPC البوابة لا يقبل UUID طالب من المتصفح؛ يحل هوية الطالب من Auth.                              | `002_functions.sql`, `006_security_hardening.sql`, `008_student_portal_projection.sql` |
+| BR-003  | الإسقاط يختار قيدًا نشطًا غير منسحب، مع أولوية العام الحالي ثم تاريخ القيد الأحدث.              | `008_student_portal_projection.sql`                                                    |
+| BR-004  | النتائج التي تظهر للطالب مرتبطة بحالة `approved` أو `closed`.                                   | `008_student_portal_projection.sql`                                                    |
+| BR-005  | تعرض أحدث 20 سجل حضور؛ mapper لا يعيد الترتيب.                                                  | `008_student_portal_projection.sql`, `js/student-portal-data.mjs`                      |
+| BR-006  | قيمة الرسوم المدفوعة تستند لمجموع الأقساط، والمتبقي لا يقل عن صفر.                              | `008_student_portal_projection.sql`                                                    |
+| BR-007  | لا ينشأ enrollment/حضور/درجة/رسم جديد لطالب مسحوب.                                              | `002_functions.sql`, `003_triggers.sql`                                                |
+| BR-008  | التحول إلى/من `withdrawn` يتطلب RPC مخولًا ويسجل أثرًا.                                         | `withdraw_student_file`, `restore_student_file`, triggers                              |
+| BR-009  | لا تنشأ سنة مغلقة مباشرة ولا يعاد فتح سنة مغلقة؛ يلزم إجراء معتمد.                              | `002_functions.sql`, `003_triggers.sql`                                                |
+| BR-010  | مجموع أوزان coursework والامتحان النهائي يساوي 100 ودرجة المادة القصوى موجبة.                   | `001_extensions.sql`                                                                   |
+| BR-011  | حضور الطالب فريد للقيد/التاريخ، ونتائج المادة للقيد/المادة/الدور.                               | `001_extensions.sql`                                                                   |
+| BR-012  | الدفعة موجبة، ولا تعدل amount/installment/date بعد التسجيل ولا تحذف نهائيًا.                    | `001_extensions.sql`, `003_triggers.sql`                                               |
+| BR-013  | سحب الطالب يعطل تسجيل الدخول؛ status وحده لا ينشئ mapping/Auth صالحًا.                          | `002_functions.sql`, `003_triggers.sql`, `student-app-access/index.ts`                 |
+| BR-014  | إدارة دخول الطلاب تقبل 1–50 UUID وحالات active/reset_required/disabled وتستبعد المسحوب/المؤرشف. | `student-app-access/index.ts`                                                          |
+| BR-015  | `record-export` يوثق عملية تسليم ويمسح pending؛ لا ينشئ ملفًا.                                  | `student-app-access/index.ts`                                                          |
+
 ### 3.3 وظائف خلفية دون واجهة إدارية ظاهرة
 
 #### FR-018 — استعراض مستخدمي المدرسة وموظفيها
