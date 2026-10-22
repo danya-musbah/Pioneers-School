@@ -1,7 +1,5 @@
 # Pioneers of Science School
 
-![Pioneers of Science School logo](assets/logo.png)
-
 An Arabic, right-to-left school website with a public information landing page and a student portal backed by Supabase. The browser application is built with native HTML, CSS, and JavaScript modules; it has no checked-in framework, package manifest, or build step.
 
 > **Implementation status:** The front end, SQL migrations, and Supabase Edge Functions are present in the repository. A live Supabase deployment and end-to-end authentication/data access have not been verified.
