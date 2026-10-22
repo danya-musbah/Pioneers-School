@@ -1,64 +1,155 @@
-# مدرسة رواد العلم الأولى
+# Pioneers of Science School
 
-واجهة عربية RTL لمدرسة رواد العلم، مبنية بـ HTML وCSS وJavaScript ES Modules دون إطار عمل أو خطوة بناء. تحتفظ الصفحة العامة بمسارها التحريري، بينما تقدم بوابة الطالب مساحة تعلّم شخصية بهوية المدرسة الزرقاء والبرتقالية، وتعرض البيانات المرتبطة بالحساب فقط.
+![Pioneers of Science School logo](assets/logo.png)
 
-## ما يعمل في التطبيق
+An Arabic, right-to-left school website with a public information landing page and a student portal backed by Supabase. The browser application is built with native HTML, CSS, and JavaScript modules; it has no checked-in framework, package manifest, or build step.
 
-- صفحة عامة تحريرية تعرض هوية المدرسة، مراحلها، جولة في أقسام البوابة، رحلة الاستخدام، أسئلة شائعة ووسائل التواصل المسجلة.
-- نظام أيقونات موحد مبني على Lucide؛ رسوم المدرسة تُستخدم كصور شخصية احتياطية ورسوم سياقية، ولا تحل محل رموز الحالة والتنقل.
-- انتقالات ظهور محدودة وParallax للشاشات ذات المؤشر، مع احترام `prefers-reduced-motion`.
-- تسجيل دخول الطالب عبر Supabase Auth باستخدام رقم الطالب وكلمة المرور.
-- استعادة جلسة Supabase المحفوظة وتسجيل الخروج.
-- عرض ملخص بصري، والملف، والحضور، والنتائج المعتمدة فقط، والرسوم، والجدول، والروابط التعليمية إن أضافتها المدرسة.
-- تنقل جانبي على الشاشات الواسعة وشريط لمس سفلي على الهواتف، مع احترام `prefers-reduced-motion`.
-- تُعرض الحالات الفارغة بوضوح بدل بيانات تجريبية.
-- لا تُرسل مفاتيح الخدمة السرية إلى المتصفح؛ عمليات الدخول وقراءة بيانات الطالب مقيدة بالخادم وRPC.
+> **Implementation status:** The front end, SQL migrations, and Supabase Edge Functions are present in the repository. A live Supabase deployment and end-to-end authentication/data access have not been verified.
 
-واجهة ولي الأمر المستقلة والإشعارات والأوسمة والنقل ليست مفعّلة في التطبيق الحالي، لذلك لا تُعرض بوصفها وظائف جاهزة.
+## Contents
 
-## التشغيل محليًا
+- [Overview](#overview)
+- [Features and boundaries](#features-and-boundaries)
+- [Architecture](#architecture)
+- [Technology](#technology)
+- [Run locally](#run-locally)
+- [Configure Supabase](#configure-supabase)
+- [Tests](#tests)
+- [Repository map](#repository-map)
+- [Security and limitations](#security-and-limitations)
+- [Project documentation](#project-documentation)
 
-1. شغّل خادمًا ثابتًا من جذر المستودع: `python -m http.server 8000`
-2. افتح `http://localhost:8000`.
-3. عند غياب إعدادات Supabase، تبقى الصفحة العامة متاحة ويعرض نموذج الدخول تعليمات الإعداد.
+## Overview
 
-## ربط Supabase
+The project presents the school and its learning stages, then provides an authenticated student space for personal enrollment information and school records. Student data is requested through authenticated Supabase RPC functions rather than direct browser queries to the student and finance tables.
 
-1. اربط المستودع بمشروع Supabase وطبّق ملفات migrations الموجودة فعليًا في `supabase/migrations/` بترتيبها الرقمي؛ في هذه النسخة تمتد الملفات من `001_extensions.sql` إلى `008_student_portal_projection.sql`:
-   `supabase link --project-ref <PROJECT_REF>` ثم `supabase db push`.
-2. في `js/supabase-config.js`، أدخل `url` للمشروع و`anonKey` (أو المفتاح العام publishable). هذه القيم عامة بطبيعتها، وتُستخدم مع RLS؛ لا تضع مفتاح `service_role` هنا.
-3. اضبط `CORS_ALLOWED_ORIGINS` في أسرار Supabase ليحتوي على نطاقات التطبيق المنشورة المسموحة مفصولة بفواصل، مثل `supabase secrets set --project-ref <PROJECT_REF> CORS_ALLOWED_ORIGINS=https://school.example`، ثم انشر الدالتين: `supabase functions deploy student-login` و`supabase functions deploy student-avatar`. يسمح المصدران صراحةً بأصل التطوير `http://localhost:8000`؛ لا يلزم إضافته إلى السر.
-4. لا تسمح في `CORS_ALLOWED_ORIGINS` إلا بنطاقات التطبيق المنشورة التي تحتاجها فعلًا. إذا كانت سياسة الإنتاج تمنع localhost تمامًا، فأزل أصل التطوير من قائمة الدالة قبل نشر نسخة الإنتاج.
-5. أنشئ حسابات دخول الطلاب من مسار الإدارة الموجود؛ يجب أن يكون الطالب مفعّلًا وأن يتطابق سجل `student_app_accounts` مع حساب Auth.
+The repository also contains a broader school-information schema and server-side staff/student account-management functions. It does **not** contain a visible staff administration application that consumes those management endpoints.
 
-يحتوي `.env.example` على قيم توضيحية للاختبار المحلي، و`.env` المحلي مستثنى عبر `.gitignore`. يتطلب تشغيل الدالتين محليًا تعبئة `SUPABASE_URL` و`SUPABASE_ANON_KEY` و`SUPABASE_SERVICE_ROLE_KEY` و`CORS_ALLOWED_ORIGINS` بقيم بيئة محلية صالحة، ثم تشغيل `supabase functions serve --env-file .env`. يستخدم مفتاح الخدمة داخل الدالة على الخادم فقط، ولا تضعه في الواجهة أو تخدم ملف البيئة عبر خادم الويب أو ترفعه إلى Git.
+## Features and boundaries
 
-## ضوابط البيانات
+| Area | What the repository implements | Verification boundary |
+| --- | --- | --- |
+| Public site | Arabic school information, stages, portal overview, FAQ, and contact links | Implemented in the static front end; no browser automation is included |
+| Student sign-in | Student number and password form; `student-login` Edge Function resolves the student account and returns an Auth session | Source is present; live Supabase sign-in is unverified |
+| Student portal | Summary, profile, attendance, approved results, fees, timetable, and an educational-links page | UI and data projection are present; live data is unverified; educational links currently map to an empty list |
+| Session behavior | Restore a saved session, confirm linked student identity, navigate by portal page, and sign out | Source is present; browser/Auth integration is unverified |
+| Student portrait | Optional private photo retrieval through a short-lived signed Storage URL, with local artwork fallbacks | Source and static checks are present; live Storage behavior is unverified |
+| Management APIs | Edge Functions for staff user administration and student app access/account issuance | Server-side code exists; no consuming management UI is present in this repository |
 
-- `student-login` يتحقق من رقم الطالب على الخادم، ويستدعي Auth، ويعيد رموز الجلسة فقط دون كشف بريد تسجيل الدخول. صلاحيات استعلام الهوية وتحديد المحاولات محصورة بدور `service_role` عبر الدالة.
-- `student_portal_data()` يتحقق من `auth.uid()` ويرجع إسقاطًا محدودًا للطالب المرتبط بالجلسة.
-- `student_portal_identity()` يعيد الجنس ومراجع الصورة للطالب المرتبط بالجلسة فقط، دون قبول معرّف من المتصفح؛ `student-avatar` يوقّع مسار `photos` الخاص على الخادم.
-- لا يقرأ حساب الطالب جداول `students` أو الجداول المالية مباشرة، ولا يحصل على نتائج غير معتمدة.
-- مفاتيح Supabase العامة لا تحل محل RLS. لا تنشر قبل تطبيق migrations واختبار السياسات في مشروعك.
+There is no separate parent sign-in experience. Notifications, badges, transport, and other school modules found in the database schema are not presented as implemented browser features.
 
-## الملفات الأساسية
+## Architecture
 
-- `index.html`: نقطة الدخول.
-- `css/tokens.css` و`css/styles.css`: الهوية والتنسيق.
-- `css/student-portal.css`: تنسيق واجهة الطالب وصور الشخصيات.
-- `js/app.js` و`js/student-artwork.js`: المصادقة وعرض البوابة وفهرس رسوم المدرسة.
-- `js/supabase-config.js`: إعداد URL والمفتاح العام للمتصفح.
-- `supabase/functions/student-login/` و`supabase/functions/student-avatar/`: تسجيل الدخول وتوقيع صورة الطالب الخاصة.
-- `supabase/migrations/001_extensions.sql` و`002_functions.sql` و`006_security_hardening.sql` و`007_storage.sql` و`008_student_portal_projection.sql`: مخطط الطالب، إسقاطات بيانات البوابة، صلاحياتها وتخزين الصور الخاص.
+```mermaid
+flowchart LR
+    Browser["Static browser app<br/>HTML / CSS / JavaScript modules"]
+    Login["student-login<br/>Supabase Edge Function"]
+    Auth["Supabase Auth"]
+    RPC["Authenticated RPCs<br/>student_portal_session<br/>student_portal_data"]
+    DB[("PostgreSQL<br/>student and school records")]
+    Identity["student_portal_identity RPC"]
+    Avatar["student-avatar<br/>Supabase Edge Function"]
+    Storage[("Private photos bucket")]
 
-## تحقق واجهة الطالب
+    Browser -->|"student number + password"| Login
+    Login -->|"resolve account and sign in"| Auth
+    Login -->|"session tokens"| Browser
+    Browser -->|"authenticated RPC calls"| RPC
+    RPC --> DB
+    Browser -->|"bearer session"| Avatar
+    Avatar --> Identity
+    Identity --> DB
+    Avatar -->|"signed URL"| Storage
+    Avatar -->|"short-lived image URL"| Browser
+```
 
-- تُستخدم الشخصيات والرموز المرفقة في مواضعها المناسبة، ويُستخدم أصل ساحة المدرسة الموجود في الصفحة العامة ومجتمع بوابة الطالب. ملف `assets/images/login background.png` محفوظ لكنه غير مستخدم.
-- تنقل البوابة السفلي ثابت حتى عرض 1024px؛ يعرض الهاتف أربع وجهات شائعة ويفتح بقية الأقسام من «المزيد»، بينما يعرض التابلت الأقسام السبعة. أزراره تستخدم مسارات الأقسام نفسها وتدعم `#student/<page>` والرجوع/التقدم.
-- فُحصت واجهات الصفحة العامة والفوتر والـnavigation عند عروض 320 و360 و390 و430 و600 و680 و768 و820 و1024 و1280px؛ لم يظهر تمرير أفقي. قائمة «المزيد» فُتحت وأُغلقت بلوحة المفاتيح.
-- تحققت شفافية صورة `feature-preview__character` من قناة ألفا في PNG، وأزيلت الخلفية والحد والظل من عنصر الصورة فقط، مع بقاء خلفية بطاقة المعاينة.
-- أزيل مرجع أصل الشخصية الجماعي غير الموجود من manifest؛ يستخدم التطبيق الصورة الجماعية الموجودة. لم يرصد اختبار الصفحة العامة طلبات موارد مفقودة.
-- اجتاز `js/app.js` و`js/data.js` و`js/student-artwork.js` و`js/supabase-client.js` فحص `node --check`، ولم تظهر تشخيصات محرر في ملفات JavaScript وCSS التي فُحصت.
-- اختُبرت محليًا حالات رفض الدخول، ورفض/انتهاء الجلسة، وفشل جلب البيانات الأساسية، وإعادة المحاولة، وانتهاء المهلة باستخدام استجابات محاكاة محلية معزولة. لم تُحاكَ بوابة ناجحة ببيانات طالب وهمية.
-- لا توجد حزمة اختبارات آلية أو إعداد بناء في جذر المستودع. لم يُنفّذ تسجيل دخول حقيقي أو قراءة بيانات أو تسجيل خروج ضد Supabase، ولم يُختبر رابط Storage الموقّع؛ يلزم اختبار تكاملي مصرح به على بيئة Supabase اختبارية قبل تأكيد نجاح المصادقة والبيانات الحقيقية.
-- أضيف `008_student_portal_projection.sql` محليًا لإصلاح إسقاط بيانات الطالب والجدول؛ لم يُطبّق على أي قاعدة بيانات ولم تُنشر Edge Functions. اختبارات التحويل وعقد SQL المحلية لا تثبت نجاح القراءة الحية أو الصورة دون جلسة اختبار مصرح بها.
+The browser calls the student login and avatar functions, plus the `student_portal_session`, `student_portal_data`, and `student_portal_identity` RPCs. Server-side functions use Supabase configuration supplied to their runtime. The `service_role` key must never be placed in browser configuration.
+
+## Technology
+
+- **Browser:** HTML5, CSS, JavaScript ES modules, responsive layouts, RTL presentation, and reduced-motion styles.
+- **Data and identity:** Supabase Auth, PostgreSQL, Row Level Security (RLS), PostgREST RPCs, and private Supabase Storage.
+- **Server functions:** TypeScript/Deno Edge Functions importing `@supabase/supabase-js` from `esm.sh`.
+- **External browser assets:** Lucide icons from unpkg and the Tajawal font from Google Fonts.
+- **Tests:** Node.js built-in test runner (`node:test`); no package manager manifest or build configuration is present.
+
+## Run locally
+
+From the repository root, start a static server:
+
+```powershell
+python -m http.server 8000
+```
+
+Open <http://localhost:8000>. The public site can render without a configured Supabase client; authenticated portal functions require a working Supabase project and the corresponding server functions.
+
+## Configure Supabase
+
+The repository contains eight ordered SQL migrations in [`supabase/migrations/`](supabase/migrations/) and configuration for four Edge Functions in [`supabase/config.toml`](supabase/config.toml). The following commands describe the checked-in setup; applying them to a real project was not part of verification for this documentation update.
+
+1. Install and authenticate the Supabase CLI, then link a project and apply the migrations:
+
+   ```powershell
+   supabase link --project-ref <PROJECT_REF>
+   supabase db push
+   ```
+
+2. Set the project URL and public anon/publishable key in [`js/supabase-config.js`](js/supabase-config.js). Those browser values are public; never put a `service_role` key in this file.
+3. For server functions, provide `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `CORS_ALLOWED_ORIGINS` as server-side secrets. The checked-in [`.env.example`](.env.example) contains placeholders, not working credentials. Keep any local `.env` out of version control.
+4. Set production origins explicitly, then deploy the student functions used by the browser:
+
+   ```powershell
+   supabase secrets set --project-ref <PROJECT_REF> CORS_ALLOWED_ORIGINS=https://school.example
+   supabase functions deploy student-login
+   supabase functions deploy student-avatar
+   ```
+
+   `student-app-access` and `admin-user-management` are additional server APIs. Deploy and expose them only as needed by an authorized client; no such client UI is included here.
+
+5. Create and enable student accounts through an authorized management workflow. The Auth user must be linked to the corresponding `student_app_accounts` row and eligible student record.
+
+For local Edge Function serving, create a local `.env` from the placeholders, supply valid test-project values, and run:
+
+```powershell
+supabase functions serve --env-file .env
+```
+
+Do not serve the repository root as a public static directory if it contains a populated `.env`.
+
+## Tests
+
+Run the repository's test file with Node.js:
+
+```powershell
+node --test tests\student-portal-data.test.mjs
+```
+
+The current run produced **8 passing tests and 1 failing test**. The failing profile-portrait CSS assertion expects `max-height: 100%`, while the current rule in `css/student-portal.css` is `120%`. The tests cover data mapping, timetable behavior, HTML escaping, static SQL/function contracts, gender normalization, and CSS source assertions; they do not establish that the deployed Supabase services work.
+
+## Repository map
+
+| Path | Responsibility |
+| --- | --- |
+| [`index.html`](index.html) | Arabic RTL document shell and browser entry point |
+| [`js/app.js`](js/app.js) | Public landing page, login/session flow, portal rendering, and navigation |
+| [`js/student-portal-data.mjs`](js/student-portal-data.mjs) | Portal response normalization and timetable-grid construction |
+| [`js/supabase-client.js`](js/supabase-client.js) and [`js/supabase-config.js`](js/supabase-config.js) | Browser client loading and public project settings |
+| [`css/`](css/) and [`assets/`](assets/) | Visual system, responsive styles, icons, school logo, and illustrations |
+| [`supabase/migrations/`](supabase/migrations/) | PostgreSQL schema, functions, triggers, RLS, seed data, Storage policies, and portal projection |
+| [`supabase/functions/`](supabase/functions/) | Student login/avatar and management Edge Functions |
+| [`tests/student-portal-data.test.mjs`](tests/student-portal-data.test.mjs) | Node-based mapping and static contract tests |
+| [`docs/`](docs/) | Requirements and project evidence documents |
+
+## Security and limitations
+
+- Student portal RPCs resolve the student from the authenticated identity and do not accept a browser-supplied student ID. Results in the portal projection are limited to approved/closed term results.
+- The student profile projection includes sensitive personal fields. Confirm which fields the student should be able to see and minimize the projection to the school’s approved data policy before production use.
+- Migrations include broad school-system tables and RLS policies. Review tenant scoping, file access, administrative authorization, and all grants against the actual deployment before exposing the backend.
+- Sign-in throttling, CORS settings, and server-side key handling are implemented in source, but have not been tested against a deployed environment. CORS is not an authorization boundary.
+- There is no verified production URL, deployment record, live integration test, or documented service-level target in this repository.
+- External font/icon/CDN requests require network access. The project does not include an automated browser, accessibility, or cross-browser test suite.
+
+## Project documentation
+
+- [Software Requirements Specification](docs/SRS.md)
+- [Project Profile and CV Evidence](docs/PROJECT_PROFILE.md)
