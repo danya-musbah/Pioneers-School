@@ -1855,10 +1855,11 @@ function renderPortalPageMarkup(page, student) {
   }
 
   if (page === "timetable") {
-    const timetableIllustration = student.timetable.length
-      ? studentArtwork.pages.timetable.active
-      : null;
     const timetableGrid = buildTimetableGrid(student);
+    const timetableIllustration =
+      student.timetable.length || timetableGrid.rows.length
+        ? studentArtwork.pages.timetable.active
+        : null;
     const currentDay = new Date().getDay();
     const rows = timetableGrid.rows
       .map(
@@ -1878,19 +1879,41 @@ function renderPortalPageMarkup(page, student) {
       `,
       )
       .join("");
+    const unplacedLessons = timetableGrid.unplacedLessons
+      .map((lesson) => {
+        const day =
+          lesson.day ||
+          (lesson.day_number !== null && lesson.day_number !== undefined
+            ? `اليوم ${lesson.day_number.toLocaleString("ar-LY")}`
+            : "اليوم غير مسجل");
+        const period =
+          lesson.period ||
+          (lesson.period_number !== null && lesson.period_number !== undefined
+            ? `الحصة ${lesson.period_number.toLocaleString("ar-LY")}`
+            : "الفترة غير مسجلة");
+        return `<li>${day} · ${period}: ${lesson.subject || "اسم المادة غير مسجل"}${lesson.teacher ? ` — ${lesson.teacher}` : ""}${lesson.time ? ` (${lesson.time})` : ""}</li>`;
+      })
+      .join("");
     const timetableWarnings = [
       timetableGrid.missingSubjectCount
         ? `<p class="timetable-warning" role="status">تعذر تحديد اسم المادة في ${timetableGrid.missingSubjectCount.toLocaleString("ar-LY")} حصة. أُظهرنا السجل في موضعه دون استبدال الاسم ببيانات افتراضية.</p>`
         : "",
       timetableGrid.unplacedCount
-        ? `<p class="timetable-warning" role="status">تعذر وضع ${timetableGrid.unplacedCount.toLocaleString("ar-LY")} حصة في الشبكة لنقص رقم اليوم أو الفترة في سجلها.</p>`
+        ? `<div class="timetable-warning" role="status"><p>تعذر وضع ${timetableGrid.unplacedCount.toLocaleString("ar-LY")} حصة في الشبكة لنقص رقم اليوم أو الفترة في سجلها؛ عُرضت السجلات هنا بدل إسقاطها.</p>${unplacedLessons ? `<ul class="timetable-warning__entries">${unplacedLessons}</ul>` : ""}</div>`
         : "",
     ].join("");
+    const timetableMarkup = timetableGrid.rows.length
+      ? `<div class="timetable-shell" data-reveal><div class="timetable-grid__wrapper" tabindex="0" role="region" aria-label="جدول الحصص؛ يمكن التمرير أفقيًا"><table class="timetable-grid"><thead><tr><th scope="col" class="timetable-grid__corner">اليوم</th>${timetableGrid.periods.length ? timetableGrid.periods.map((period) => `<th scope="col"><span class="timetable-grid__period-number">${period.name || `الحصة ${period.number.toLocaleString("ar-LY")}`}</span>${period.name ? `<span class="timetable-grid__period-name">رقم الفترة ${period.number.toLocaleString("ar-LY")}</span>` : ""}<time>${period.startTime && period.endTime ? `${period.startTime} – ${period.endTime}` : period.startTime || period.endTime || "وقت غير مسجل"}</time></th>`).join("") : '<th scope="col">الفترات</th>'}</tr></thead><tbody>${timetableGrid.periods.length ? rows : timetableGrid.rows.map((day) => `<tr><th scope="row" class="timetable-grid__day ${day.day_number === currentDay ? "is-today" : ""}">${day.day}</th><td class="timetable-grid__cell"><span class="timetable-grid__empty">لا توجد فترات مسجلة</span></td></tr>`).join("")}</tbody></table></div></div>`
+      : "";
+    const timetableContent =
+      timetableGrid.rows.length || timetableGrid.unplacedCount
+        ? `${timetableWarnings}${timetableMarkup}${timetableGrid.rows.length ? "" : emptyState("calendar-days", "لا توجد أيام دراسة مهيأة", "عُرضت أي حصص غير مكتملة بيانات الموعد أعلاه.", studentArtwork.pages.timetable.empty)}`
+        : emptyState("calendar-days", "لم يُنشر جدول الصف بعد", "سيظهر جدولك هنا عندما تضيف المدرسة الحصص إلى النظام.", studentArtwork.pages.timetable.empty);
 
     return `
       <section class="portal-page study-page" aria-labelledby="portal-page-title">
         ${renderStudyPageHeading(student.academicYear ? `العام الدراسي ${student.academicYear}` : "إيقاع الأسبوع", "جدولي الدراسي", "مواعيد الحصص المنشورة للصف المرتبط بقيدك.", timetableIllustration, studentFloatingIcons.schedule)}
-        ${student.timetable.length ? `${timetableWarnings}<div class="timetable-shell" data-reveal><div class="timetable-grid__wrapper" tabindex="0" role="region" aria-label="جدول الحصص؛ يمكن التمرير أفقيًا"><table class="timetable-grid"><thead><tr><th scope="col" class="timetable-grid__corner">اليوم</th>${timetableGrid.periods.map((period) => `<th scope="col"><span class="timetable-grid__period-number">الحصة ${period.number.toLocaleString("ar-LY")}</span>${period.name !== `الحصة ${period.number}` ? `<span class="timetable-grid__period-name">${period.name}</span>` : ""}<time>${period.startTime && period.endTime ? `${period.startTime} – ${period.endTime}` : period.startTime || period.endTime || "وقت غير مسجل"}</time></th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div></div>` : emptyState("calendar-days", "لم يُنشر جدول الصف بعد", "سيظهر جدولك هنا عندما تضيف المدرسة الحصص إلى النظام.", studentArtwork.pages.timetable.empty)}
+        ${timetableContent}
       </section>
     `;
   }

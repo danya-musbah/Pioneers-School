@@ -23,8 +23,27 @@ function safeText(value) {
 }
 
 function validDayNumber(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    return null;
+  }
   const number = Number(value);
   return Number.isInteger(number) && number >= 0 && number <= 6 ? number : null;
+}
+
+function validPeriodNumber(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    return null;
+  }
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : null;
 }
 
 function timePart(value) {
@@ -54,6 +73,9 @@ export function mapPortalData(data, now = new Date()) {
   const results = Array.isArray(data.results) ? data.results : [];
   const feeRecords = Array.isArray(data.fees) ? data.fees : [];
   const rawTimetable = Array.isArray(data.timetable) ? data.timetable : [];
+  const rawTimetablePeriods = Array.isArray(data.timetable_periods)
+    ? data.timetable_periods
+    : [];
   const today = now.getDay();
   const dayGroups = new Map();
   const timetableIssues = { missingSubject: 0, unplacedLesson: 0 };
@@ -73,11 +95,7 @@ export function mapPortalData(data, now = new Date()) {
   for (const entry of rawTimetable) {
     if (!entry || typeof entry !== "object") continue;
     const dayNumber = validDayNumber(entry.day_number);
-    const periodNumber =
-      Number.isInteger(Number(entry.period_number)) &&
-      Number(entry.period_number) > 0
-        ? Number(entry.period_number)
-        : null;
+    const periodNumber = validPeriodNumber(entry.period_number);
     const subject = cleanText(entry.subject);
     const periodName = cleanText(entry.period);
     const period = periodName || (periodNumber ? `الحصة ${periodNumber}` : "");
@@ -207,20 +225,28 @@ export function mapPortalData(data, now = new Date()) {
       .map((entry) => ({
         day_number: validDayNumber(entry.day_number),
         day: safeText(entry.day),
-        period_number:
-          Number.isInteger(Number(entry.period_number)) &&
-          Number(entry.period_number) > 0
-            ? Number(entry.period_number)
-            : null,
+        period_number: validPeriodNumber(entry.period_number),
+        entry_id: safeText(entry.entry_id),
         period: safeText(entry.period),
         period_id: safeText(entry.period_id),
         start_time: safeText(timePart(entry.start_time)),
         end_time: safeText(timePart(entry.end_time)),
         time: safeText(buildLessonTime(entry.start_time, entry.end_time)),
         subject: safeText(entry.subject),
+        subject_id: safeText(entry.subject_id),
         teacher: safeText(entry.teacher),
         room: safeText(entry.room),
       })),
+    timetablePeriods: rawTimetablePeriods
+      .filter((period) => period && typeof period === "object")
+      .map((period) => ({
+        id: safeText(period.period_id ?? period.id),
+        number: validPeriodNumber(period.period_number),
+        name: safeText(period.period ?? period.name_ar),
+        startTime: safeText(timePart(period.start_time)),
+        endTime: safeText(timePart(period.end_time)),
+      }))
+      .filter((period) => period.number !== null),
     timetableDays,
     timetableIssues,
     todayAgenda: timetableDays
@@ -239,8 +265,16 @@ export function mapPortalData(data, now = new Date()) {
 
 export function buildTimetableGrid(student) {
   const periodsByNumber = new Map();
+  for (const period of student.timetablePeriods ?? []) {
+    if (period.number === null) continue;
+    if (!periodsByNumber.has(period.number)) {
+      periodsByNumber.set(period.number, period);
+    }
+  }
   for (const lesson of student.timetable ?? []) {
-    if (lesson.period_number === null) continue;
+    if (lesson.period_number === null || lesson.period_number === undefined) {
+      continue;
+    }
     if (!periodsByNumber.has(lesson.period_number)) {
       periodsByNumber.set(lesson.period_number, {
         number: lesson.period_number,
@@ -269,5 +303,12 @@ export function buildTimetableGrid(student) {
     rows,
     unplacedCount: student.timetableIssues?.unplacedLesson ?? 0,
     missingSubjectCount: student.timetableIssues?.missingSubject ?? 0,
+    unplacedLessons: (student.timetable ?? []).filter(
+      (lesson) =>
+        lesson.day_number === null ||
+        lesson.day_number === undefined ||
+        lesson.period_number === null ||
+        lesson.period_number === undefined,
+    ),
   };
 }

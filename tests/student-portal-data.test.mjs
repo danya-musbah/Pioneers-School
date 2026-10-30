@@ -112,6 +112,155 @@ test("maps actual subject names into the matching numbered timetable cells", () 
   assert.equal(grid.unplacedCount, 0);
 });
 
+test("keeps every configured school day and period, including empty cells", () => {
+  const student = mapPortalData(
+    portalFixture({
+      timetable_days: [
+        { day_number: 0, name_ar: "الأحد" },
+        { day_number: 1, name_ar: "الاثنين" },
+        { day_number: 2, name_ar: "الثلاثاء" },
+        { day_number: 3, name_ar: "الأربعاء" },
+        { day_number: 4, name_ar: "الخميس" },
+      ],
+      timetable_periods: [1, 2, 3].map((number) => ({
+        period_number: number,
+        period: `الحصة ${number}`,
+        start_time: `0${7 + number}:00:00`,
+        end_time: `0${7 + number}:40:00`,
+      })),
+      timetable: [
+        {
+          entry_id: "first-period",
+          day_number: 0,
+          period_number: 1,
+          subject: "الرياضيات",
+        },
+        {
+          entry_id: "last-period",
+          day_number: 4,
+          period_number: 3,
+          subject: "العلوم",
+        },
+      ],
+    }),
+    currentSunday,
+  );
+  const grid = buildTimetableGrid(student);
+
+  assert.deepEqual(grid.periods.map((period) => period.number), [1, 2, 3]);
+  assert.deepEqual(
+    grid.rows.map((day) => day.day_number),
+    [0, 1, 2, 3, 4],
+  );
+  assert.equal(grid.rows[0].cells[0].lessons[0].subject, "الرياضيات");
+  assert.equal(grid.rows[4].cells[2].lessons[0].subject, "العلوم");
+  assert.equal(grid.rows[2].cells.every((cell) => cell.lessons.length === 0), true);
+  assert.equal(grid.periods[0].startTime, "08:00");
+});
+
+test("shows a period-one-only day and preserves days with fewer or no lessons", () => {
+  const student = mapPortalData(
+    portalFixture({
+      timetable_days: [
+        { day_number: 0, name_ar: "الأحد" },
+        { day_number: 1, name_ar: "الاثنين" },
+        { day_number: 2, name_ar: "الثلاثاء" },
+      ],
+      timetable_periods: [
+        { period_number: 1, period: "الحصة الأولى", start_time: "08:00:00" },
+        { period_number: 2, period: "الحصة الثانية", end_time: "09:30:00" },
+      ],
+      timetable: [
+        {
+          entry_id: "only-first-period",
+          day_number: 0,
+          period_number: 1,
+          subject: "اللغة العربية",
+          teacher: null,
+          start_time: null,
+          end_time: null,
+        },
+      ],
+    }),
+    currentSunday,
+  );
+  const grid = buildTimetableGrid(student);
+
+  assert.equal(grid.rows.length, 3);
+  assert.equal(grid.rows[0].cells[0].lessons[0].subject, "اللغة العربية");
+  assert.equal(grid.rows[0].cells[0].lessons[0].teacher, "");
+  assert.equal(grid.rows[0].cells[0].lessons[0].time, "");
+  assert.equal(grid.rows[1].cells.every((cell) => cell.lessons.length === 0), true);
+  assert.equal(grid.rows[2].cells.every((cell) => cell.lessons.length === 0), true);
+  assert.equal(grid.periods[1].startTime, "");
+  assert.equal(grid.periods[1].endTime, "09:30");
+});
+
+test("keeps consecutive lessons ordered and retains unplaced rows for display", () => {
+  const student = mapPortalData(
+    portalFixture({
+      timetable_days: [{ day_number: 0, name_ar: "الأحد" }],
+      timetable: [
+        {
+          entry_id: "period-two",
+          day_number: 0,
+          period_number: 2,
+          subject: "العلوم",
+        },
+        {
+          entry_id: "period-one",
+          day_number: 0,
+          period_number: 1,
+          subject: "الرياضيات",
+        },
+        {
+          entry_id: "unplaced",
+          day_number: null,
+          period_number: 1,
+          subject: "التاريخ",
+        },
+      ],
+    }),
+    currentSunday,
+  );
+  const grid = buildTimetableGrid(student);
+  const visibleEntryIds = [
+    ...grid.rows.flatMap((day) =>
+      day.cells.flatMap((cell) => cell.lessons.map((lesson) => lesson.id)),
+    ),
+    ...grid.unplacedLessons.map((lesson) => lesson.entry_id),
+  ];
+
+  assert.deepEqual(
+    grid.rows[0].cells.map((cell) => cell.lessons[0].subject),
+    ["الرياضيات", "العلوم"],
+  );
+  assert.deepEqual(visibleEntryIds.sort(), [
+    "period-one",
+    "period-two",
+    "unplaced",
+  ]);
+  assert.equal(grid.unplacedLessons[0].subject, "التاريخ");
+  assert.equal(grid.unplacedCount, 1);
+});
+
+test("does not interpret null or blank day numbers as Sunday", () => {
+  const student = mapPortalData(
+    portalFixture({
+      timetable_days: [],
+      timetable: [
+        { day_number: null, period_number: 1, subject: "غير محدد" },
+        { day_number: "", period_number: 1, subject: "غير محدد أيضًا" },
+      ],
+    }),
+    currentSunday,
+  );
+
+  assert.equal(student.timetableDays.length, 0);
+  assert.equal(student.timetableIssues.unplacedLesson, 2);
+  assert.equal(buildTimetableGrid(student).unplacedLessons.length, 2);
+});
+
 test("maps available personal and enrollment fields without family phone numbers", () => {
   const student = mapPortalData(portalFixture(), currentSunday);
 
@@ -209,6 +358,38 @@ test("the SQL projection uses the current identity and class-subject relation wi
   assert.match(
     hardening,
     /grant execute on function public\.student_portal_data\(\) to authenticated/,
+  );
+});
+
+test("the timetable projection supplies periods only for the student's enrolled class and year", async () => {
+  const migration = await readFile(
+    new URL(
+      "../supabase/migrations/009_student_portal_timetable_periods.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(
+    migration,
+    /alter function public\.student_portal_data\(\)\s+rename to student_portal_data_base/,
+  );
+  assert.match(migration, /v_student_id := app\.current_student_portal_id\(\)/);
+  assert.match(migration, /public\.student_portal_data_base\(\)/);
+  assert.match(migration, /tp\.school_id = v_school_id/);
+  assert.match(migration, /tp\.academic_year_id = v_academic_year_id/);
+  assert.match(migration, /te\.class_id = v_class_id/);
+  assert.match(migration, /te\.academic_year_id = v_academic_year_id/);
+  assert.match(migration, /'period_number', tp\.period_number/);
+  assert.match(migration, /'start_time', tp\.start_time/);
+  assert.match(migration, /'end_time', tp\.end_time/);
+  assert.match(
+    migration,
+    /grant execute on function public\.student_portal_data\(\) to authenticated/,
+  );
+  assert.match(
+    migration,
+    /revoke all on function public\.student_portal_data_base\(\)\s+from public, anon, authenticated/,
   );
 });
 

@@ -2137,6 +2137,15 @@
   line-height: 1.6;
 }
 
+.timetable-warning__entries {
+  margin: 8px 0 0;
+  padding-inline-start: 1.25rem;
+}
+
+.timetable-warning__entries li + li {
+  margin-top: 4px;
+}
+
 .week-ribbon__day {
   overflow: hidden;
   border-radius: 7px 21px 7px 21px;

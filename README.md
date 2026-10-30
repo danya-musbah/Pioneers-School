@@ -83,7 +83,7 @@ Open <http://localhost:8000>. The public site can render without a configured Su
 
 ## Configure Supabase
 
-The repository contains eight ordered SQL migrations in [`supabase/migrations/`](supabase/migrations/) and configuration for four Edge Functions in [`supabase/config.toml`](supabase/config.toml). The following commands describe the checked-in setup; applying them to a real project was not part of verification for this documentation update.
+The repository contains nine ordered SQL migrations in [`supabase/migrations/`](supabase/migrations/) and configuration for four Edge Functions in [`supabase/config.toml`](supabase/config.toml). The following commands describe the checked-in setup; applying them to a real project was not part of verification for this documentation update.
 
 1. Install and authenticate the Supabase CLI, then link a project and apply the migrations:
 
@@ -122,7 +122,7 @@ Run the repository's test file with Node.js:
 node --test tests\student-portal-data.test.mjs
 ```
 
-The current run produced **8 passing tests and 1 failing test**. The failing profile-portrait CSS assertion expects `max-height: 100%`, while the current rule in `css/student-portal.css` is `120%`. The tests cover data mapping, timetable behavior, HTML escaping, static SQL/function contracts, gender normalization, and CSS source assertions; they do not establish that the deployed Supabase services work.
+The current run produced **13 passing tests and 1 failing test**. The failing profile-portrait CSS assertion expects `max-height: 100%`, while the current rule in `css/student-portal.css` is `120%` (an existing unrelated mismatch). Timetable tests cover complete and sparse weeks, empty days, the first period, consecutive lessons, optional teacher/time fields, unplaced rows, and the class/year-scoped SQL projection. Tests do not establish that the deployed Supabase services work.
 
 ## Repository map
 
