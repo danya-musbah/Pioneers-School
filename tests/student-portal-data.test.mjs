@@ -214,6 +214,12 @@ test("keeps consecutive lessons ordered and retains unplaced rows for display", 
           subject: "الرياضيات",
         },
         {
+          entry_id: "period-one-additional",
+          day_number: 0,
+          period_number: 1,
+          subject: "مهارات",
+        },
+        {
           entry_id: "unplaced",
           day_number: null,
           period_number: 1,
@@ -232,11 +238,17 @@ test("keeps consecutive lessons ordered and retains unplaced rows for display", 
   ];
 
   assert.deepEqual(
-    grid.rows[0].cells.map((cell) => cell.lessons[0].subject),
-    ["الرياضيات", "العلوم"],
+    grid.rows[0].cells[0].lessons.map((lesson) => lesson.subject),
+    ["الرياضيات", "مهارات"],
+  );
+  assert.equal(grid.rows[0].cells[1].lessons[0].subject, "العلوم");
+  assert.deepEqual(
+    grid.rows[0].cells.map((cell) => cell.lessons.length),
+    [2, 1],
   );
   assert.deepEqual(visibleEntryIds.sort(), [
     "period-one",
+    "period-one-additional",
     "period-two",
     "unplaced",
   ]);

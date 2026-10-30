@@ -27,9 +27,9 @@ The project brief identifies the covered work as an individual voluntary project
 - **Product/requirements analysis:** The code and documentation define public-site and student-portal flows, section navigation, student data fields, backend boundaries, and known implementation gaps.
 - **Frontend engineering:** Native HTML/CSS/JavaScript modules implement the Arabic RTL landing page, authentication form, session flow, student views, responsive navigation, empty states, reduced-motion styles, and local artwork selection.
 - **Backend/API engineering:** Deno Edge Functions implement student sign-in, photo signing, and separate staff/student account-management operations.
-- **Database design:** Eight ordered SQL migrations describe school/student/academic/finance structures, helper functions, triggers, RLS policies, Storage buckets, seed data, and a student-specific RPC projection.
+- **Database design:** Nine ordered SQL migrations describe school/student/academic/finance structures, helper functions, triggers, RLS policies, Storage buckets, seed data, and a student-specific RPC projection.
 - **Integration:** The browser client uses Supabase Auth, RPCs, and Edge Functions; the avatar function integrates with private Supabase Storage.
-- **Testing/debugging:** Node built-in tests exercise portal mapping, timetable edge cases, HTML escaping, and static SQL/CSS/function contracts. Current result is 8 passing and 1 failing test.
+- **Testing/debugging:** Node built-in tests exercise portal mapping, timetable edge cases, HTML escaping, and static SQL/CSS/function contracts. Current result is 13 passing and 1 failing test; the known failure is an unrelated profile-portrait CSS assertion.
 - **Technical documentation:** The repository includes setup and security notes; this profile and the accompanying SRS distinguish source presence from live verification.
 
 Do not describe the project as paid employment, client delivery, a production deployment, or a team leadership role without additional author-provided evidence.
