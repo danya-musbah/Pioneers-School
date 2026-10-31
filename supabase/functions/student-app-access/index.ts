@@ -2,7 +2,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const MAX_TARGETS = 50;
-const allowedProductionOrigins = ["https://pioneers-school.pages.dev"];
 const allowedDevelopmentOrigins = [
   "http://localhost:8000",
   "http://localhost:3000",
@@ -22,11 +21,7 @@ function allowedOrigins() {
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
-  return new Set([
-    ...configured,
-    ...allowedDevelopmentOrigins,
-    ...allowedProductionOrigins,
-  ]);
+  return new Set([...configured, ...allowedDevelopmentOrigins]);
 }
 
 function corsHeaders(request: Request) {
