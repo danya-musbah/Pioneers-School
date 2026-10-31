@@ -542,3 +542,19 @@ test("student login exchanges passwords for Supabase sessions before restoring t
   assert.match(client, /persistSession:\s*true/);
   assert.match(client, /autoRefreshToken:\s*true/);
 });
+
+test("timetable headers show only the period title and time", async () => {
+  const [app, css] = await Promise.all([
+    readFile(new URL("../js/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../css/student-portal.css", import.meta.url), "utf8"),
+  ]);
+  const header = app.match(
+    /timetableGrid\.periods\.map\(\(period\) => `(<th[\s\S]*?<\/th>)`\)/,
+  )?.[1];
+
+  assert.ok(header);
+  assert.match(header, /timetable-grid__period-number/);
+  assert.match(header, /<time>/);
+  assert.doesNotMatch(header, /timetable-grid__period-name|رقم الفترة/);
+  assert.doesNotMatch(css, /timetable-grid__period-name/);
+});

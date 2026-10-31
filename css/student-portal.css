@@ -2055,18 +2055,12 @@
 }
 
 .timetable-grid__period-number,
-.timetable-grid__period-name,
 .timetable-grid thead time {
   display: block;
 }
 
 .timetable-grid__period-number {
   font-size: 0.82rem;
-}
-
-.timetable-grid__period-name {
-  margin-top: 3px;
-  color: #315266;
 }
 
 .timetable-grid thead time {
