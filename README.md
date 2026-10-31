@@ -94,10 +94,10 @@ The repository contains nine ordered SQL migrations in [`supabase/migrations/`](
 
 2. Set the project URL and public anon/publishable key in [`js/supabase-config.js`](js/supabase-config.js). Those browser values are public; never put a `service_role` key in this file.
 3. For server functions, provide `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `CORS_ALLOWED_ORIGINS` as server-side secrets. The checked-in [`.env.example`](.env.example) contains placeholders, not working credentials. Keep any local `.env` out of version control.
-4. Set production origins explicitly, then deploy the student functions used by the browser:
+4. The deployed Pages origin `https://pioneers-school.pages.dev` is allowed by the browser-facing Edge Functions. Include it in `CORS_ALLOWED_ORIGINS` (along with any custom production domains) and redeploy after changing the function code:
 
    ```powershell
-   supabase secrets set --project-ref <PROJECT_REF> CORS_ALLOWED_ORIGINS=https://school.example
+   supabase secrets set --project-ref <PROJECT_REF> CORS_ALLOWED_ORIGINS=https://pioneers-school.pages.dev
    supabase functions deploy student-login
    supabase functions deploy student-avatar
    ```

@@ -2,13 +2,18 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const allowedDevelopmentOrigins = ["http://localhost:8000"];
+const allowedProductionOrigins = ["https://pioneers-school.pages.dev"];
 
 function allowedOrigins() {
   const configured = (Deno.env.get("CORS_ALLOWED_ORIGINS") || "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
-  return new Set([...configured, ...allowedDevelopmentOrigins]);
+  return new Set([
+    ...configured,
+    ...allowedDevelopmentOrigins,
+    ...allowedProductionOrigins,
+  ]);
 }
 
 function corsHeaders(request: Request) {

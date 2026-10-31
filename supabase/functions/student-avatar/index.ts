@@ -4,6 +4,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const developmentOrigins = ["http://localhost:8000"];
+const productionOrigins = ["https://pioneers-school.pages.dev"];
 const signedUrlLifetimeSeconds = 600;
 
 function allowedOrigins() {
@@ -11,7 +12,7 @@ function allowedOrigins() {
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
-  return new Set([...configured, ...developmentOrigins]);
+  return new Set([...configured, ...developmentOrigins, ...productionOrigins]);
 }
 
 function corsHeaders(request: Request) {
