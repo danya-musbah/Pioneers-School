@@ -969,7 +969,13 @@ async function submitLogin(form) {
       "student_login",
     );
 
-    if (loginError || !loginData?.access_token || !loginData?.refresh_token) {
+    if (
+      loginError ||
+      typeof loginData?.access_token !== "string" ||
+      !loginData.access_token ||
+      typeof loginData?.refresh_token !== "string" ||
+      !loginData.refresh_token
+    ) {
       try {
         const response = loginError?.context;
         if (response instanceof Response) {
@@ -994,7 +1000,7 @@ async function submitLogin(form) {
         refresh_token: loginData.refresh_token,
       });
     if (sessionError || !authData?.session || !authData?.user) {
-      throw new Error("login_session_unavailable");
+      throw diagnosticError("login_session_unavailable", sessionError);
     }
 
     stage = "student_portal";

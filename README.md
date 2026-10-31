@@ -83,7 +83,7 @@ Open <http://localhost:8000>. The public site can render without a configured Su
 
 ## Configure Supabase
 
-The repository contains nine ordered SQL migrations in [`supabase/migrations/`](supabase/migrations/) and configuration for four Edge Functions in [`supabase/config.toml`](supabase/config.toml). The following commands describe the checked-in setup; applying them to a real project was not part of verification for this documentation update.
+The repository contains nine ordered SQL migrations in [`supabase/migrations/`](supabase/migrations/) and configuration for five Edge Functions in [`supabase/config.toml`](supabase/config.toml). The following commands describe the checked-in setup.
 
 1. Install and authenticate the Supabase CLI, then link a project and apply the migrations:
 
@@ -94,11 +94,12 @@ The repository contains nine ordered SQL migrations in [`supabase/migrations/`](
 
 2. Set the project URL and public anon/publishable key in [`js/supabase-config.js`](js/supabase-config.js). Those browser values are public; never put a `service_role` key in this file.
 3. For server functions, provide `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `CORS_ALLOWED_ORIGINS` as server-side secrets. The checked-in [`.env.example`](.env.example) contains placeholders, not working credentials. Keep any local `.env` out of version control.
-4. The deployed Pages origin `https://pioneers-school.pages.dev` is allowed by the browser-facing Edge Functions. Include it in `CORS_ALLOWED_ORIGINS` (along with any custom production domains) and redeploy after changing the function code:
+4. The deployed Pages origin `https://pioneers-school.pages.dev` is allowed by the browser-facing Edge Functions. Include it in `CORS_ALLOWED_ORIGINS` (along with any custom production domains) and deploy the student and username authentication functions:
 
    ```powershell
    supabase secrets set --project-ref <PROJECT_REF> CORS_ALLOWED_ORIGINS=https://pioneers-school.pages.dev
    supabase functions deploy student-login
+   supabase functions deploy username-auth
    supabase functions deploy student-avatar
    ```
 
@@ -122,7 +123,7 @@ Run the repository's test file with Node.js:
 node --test tests\student-portal-data.test.mjs
 ```
 
-The current run produced **13 passing tests and 1 failing test**. The failing profile-portrait CSS assertion expects `max-height: 100%`, while the current rule in `css/student-portal.css` is `120%` (an existing unrelated mismatch). Timetable tests cover complete and sparse weeks, empty days, the first period, consecutive lessons, optional teacher/time fields, unplaced rows, and the class/year-scoped SQL projection. Tests do not establish that the deployed Supabase services work.
+The current run produced **15 passing tests and 1 failing test**. The failing profile-portrait CSS assertion expects `max-height: 100%`, while the current rule in `css/student-portal.css` is `120%` (an existing unrelated mismatch). Authentication regression checks cover the project/key match and that both login functions return Supabase Auth token pairs consumed by a persistent, auto-refreshing client. Timetable tests cover complete and sparse weeks, empty days, the first period, consecutive lessons, optional teacher/time fields, unplaced rows, and the class/year-scoped SQL projection. Tests do not establish that real user sign-in works against deployed services.
 
 ## Repository map
 

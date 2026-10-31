@@ -490,3 +490,55 @@ test("student profile renders its title and real portrait in a dedicated respons
     /\.profile-story__details dd\s*\{[\s\S]*?font-size: clamp\(1\.08rem/,
   );
 });
+
+test("browser Supabase key belongs to its configured project", async () => {
+  const config = await readFile(
+    new URL("../js/supabase-config.js", import.meta.url),
+    "utf8",
+  );
+  const projectUrl = config.match(/url:\s*"([^"]+)"/)?.[1];
+  const publicKey = config.match(/anonKey:\s*"([^"]+)"/)?.[1];
+
+  assert.ok(projectUrl);
+  assert.ok(publicKey);
+  assert.equal(new URL(projectUrl).hostname.split(".")[0], "cmsmgaeqwlgmapqwribm");
+
+  if (publicKey.startsWith("sb_publishable_")) return;
+
+  const payload = JSON.parse(
+    Buffer.from(
+      publicKey.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"),
+      "base64",
+    ).toString("utf8"),
+  );
+  assert.equal(payload.ref, new URL(projectUrl).hostname.split(".")[0]);
+  assert.equal(payload.role, "anon");
+});
+
+test("student login exchanges passwords for Supabase sessions before restoring them", async () => {
+  const [app, studentLogin, usernameAuth, client] = await Promise.all([
+    readFile(new URL("../js/app.js", import.meta.url), "utf8"),
+    readFile(
+      new URL("../supabase/functions/student-login/index.ts", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../supabase/functions/username-auth/index.ts", import.meta.url),
+      "utf8",
+    ),
+    readFile(new URL("../js/supabase-client.js", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(studentLogin, /authClient\.auth\.signInWithPassword/);
+  assert.match(studentLogin, /access_token:\s*authData\.session\.access_token/);
+  assert.match(studentLogin, /refresh_token:\s*authData\.session\.refresh_token/);
+  assert.match(usernameAuth, /auth\.auth\.signInWithPassword/);
+  assert.match(usernameAuth, /access_token:\s*data\.session\.access_token/);
+  assert.match(usernameAuth, /refresh_token:\s*data\.session\.refresh_token/);
+  assert.match(
+    app,
+    /client\.auth\.setSession\(\{\s*access_token:\s*loginData\.access_token,\s*refresh_token:\s*loginData\.refresh_token/s,
+  );
+  assert.match(client, /persistSession:\s*true/);
+  assert.match(client, /autoRefreshToken:\s*true/);
+});
